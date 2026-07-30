@@ -1,0 +1,23 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller / Build outputs
+build/
+dist/
+*.exe
+
+# Logs and temporary scratch files
+logs/
+*.log
+
+# Environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE / Editor settings
+.idea/
+.vscode/
