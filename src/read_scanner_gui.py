@@ -3,6 +3,8 @@ import sys
 import time
 import serial
 import requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import logging
 import threading
 import shutil
@@ -42,7 +44,18 @@ except ImportError:
 
 # --- SETUP DIREKTORI & LOGGING ---
 if getattr(sys, 'frozen', False):
-    BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
+    EXE_DIR = os.path.dirname(os.path.abspath(sys.executable))
+    PARENT_DIR = os.path.dirname(EXE_DIR)
+    
+    # Jika berjalan di dalam folder dist (misal Yuasa_Scanner_App_Folder) dan config.ini ada di folder induk (D:\PLC)
+    if os.path.exists(os.path.join(PARENT_DIR, "config.ini")):
+        BASE_DIR = PARENT_DIR
+    elif os.path.exists(os.path.join(EXE_DIR, "config.ini")):
+        BASE_DIR = EXE_DIR
+    elif os.path.basename(EXE_DIR).lower().endswith("_folder") or os.path.exists(os.path.join(PARENT_DIR, "logs")):
+        BASE_DIR = PARENT_DIR
+    else:
+        BASE_DIR = EXE_DIR
 else:
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
     if os.path.basename(SCRIPT_DIR).lower() == 'src':
@@ -314,17 +327,47 @@ def load_config():
         except Exception as e:
             logging.error(f"Gagal membaca config.ini: {e}")
     
-    # Ambil nilai Scanner
+    # Ambil Base URL Server Backend
+    base_url = config.get("SYSTEM_CONFIG", "BASE_URL", fallback="https://ypms.yuasabattery.co.id").strip().rstrip("/")
+    
+    def resolve_url(url_val):
+        url_val = (url_val or "").strip()
+        if not url_val:
+            return base_url
+        if url_val.startswith("http://") or url_val.startswith("https://"):
+            if base_url:
+                from urllib.parse import urlparse
+                p_val = urlparse(url_val)
+                p_base = urlparse(base_url)
+                return f"{p_base.scheme}://{p_base.netloc}{p_val.path}"
+            return url_val
+        else:
+            if not url_val.startswith("/"):
+                url_val = "/" + url_val
+            return base_url + url_val
+
+    # Ambil nilai Scanner 1
     scanner_enable = config.getboolean("SCANNER_CONFIG", "ENABLE", fallback=True)
     line_no = config.get("SCANNER_CONFIG", "LINE_NO", fallback="1")
     scanner_port = config.get("SCANNER_CONFIG", "PORT_SCANNER", fallback="COM3")
     scanner_baud = config.getint("SCANNER_CONFIG", "BAUD_RATE", fallback=9600)
-    scanner_url = config.get("SCANNER_CONFIG", "API_URL", fallback="https://api.pms.yuasa.seavihive.com/api/fix-scanner")
+    scanner_url = resolve_url(config.get("SCANNER_CONFIG", "API_URL", fallback="/api/fix-scanner"))
+    scanner_remove_url = resolve_url(config.get("SCANNER_CONFIG", "REMOVE_API_URL", fallback="/api/fix-scanner-remove-from-masterbox"))
+    scanner_remove_addr = config.get("SCANNER_CONFIG", "REMOVE_MONITOR_ADDRESS", fallback="").strip()
+    
+    # Ambil nilai Scanner 2
+    scanner2_enable = config.getboolean("SCANNER_CONFIG_2", "ENABLE", fallback=False)
+    line_no2 = config.get("SCANNER_CONFIG_2", "LINE_NO", fallback="1")
+    scanner_port2 = config.get("SCANNER_CONFIG_2", "PORT_SCANNER", fallback="COM4")
+    scanner_baud2 = config.getint("SCANNER_CONFIG_2", "BAUD_RATE", fallback=9600)
+    scanner_url2 = resolve_url(config.get("SCANNER_CONFIG_2", "API_URL", fallback="/api/fix-scanner"))
+    scanner2_remove_url = resolve_url(config.get("SCANNER_CONFIG_2", "REMOVE_API_URL", fallback="/api/fix-scanner-remove-from-masterbox"))
+    scanner2_remove_addr = config.get("SCANNER_CONFIG_2", "REMOVE_MONITOR_ADDRESS", fallback="").strip()
     
     # Ambil nilai Downtime
     dt_enable = config.getboolean("DOWNTIME_CONFIG", "ENABLE", fallback=True)
     dt_line_no = config.get("DOWNTIME_CONFIG", "LINE_NO", fallback="1").strip()
-    dt_url = config.get("DOWNTIME_CONFIG", "API_URL", fallback="https://api.pms.yuasa.seavihive.com/api/fix-scanner-downtime")
+    dt_url = resolve_url(config.get("DOWNTIME_CONFIG", "API_URL", fallback="/api/fix-scanner-downtime"))
     dt_log_file = config.get("DOWNTIME_CONFIG", "DOWNTIME_LOG_FILENAME", fallback="downtime_log.txt")
     dt_save_loc = config.get("DOWNTIME_CONFIG", "SAVE_LOCATION", fallback="desktop").strip().lower()
     
@@ -337,13 +380,13 @@ def load_config():
     # Ambil nilai Printer
     pr_enable = config.getboolean("PRINTER_CONFIG", "ENABLE", fallback=True)
     pr_name = config.get("PRINTER_CONFIG", "PRINTER_NAME", fallback="TSC TL241")
-    pr_url = config.get("PRINTER_CONFIG", "API_URL", fallback="https://api.pms.yuasa.seavihive.com/api/fix-scanner-pallet")
+    pr_url = resolve_url(config.get("PRINTER_CONFIG", "API_URL", fallback="/api/fix-scanner-pallet"))
     pr_monitor_addr = config.get("PRINTER_CONFIG", "MONITOR_ADDRESS", fallback="0.05")
     pr_conn_mode = config.get("PRINTER_CONFIG", "CONNECTION_MODE", fallback="cx_programmer").strip().lower()
     pr_plc_ip = config.get("PRINTER_CONFIG", "PLC_IP", fallback="192.168.1.20/1").strip()
     pr_api_line = config.get("PRINTER_CONFIG", "API_LINE_NO", fallback="1")
     pr_label_line = config.get("PRINTER_CONFIG", "LABEL_LINE_NO", fallback="01")
-    pr_retry_url = config.get("PRINTER_CONFIG", "RETRY_API_URL", fallback="https://api.pms.yuasa.seavihive.com/api/fix-scanner-pallet-retry")
+    pr_retry_url = resolve_url(config.get("PRINTER_CONFIG", "RETRY_API_URL", fallback="/api/fix-scanner-pallet-retry"))
     
     # Paper size settings
     pr_width = config.getint("PRINTER_CONFIG", "LABEL_WIDTH", fallback=40)
@@ -354,8 +397,8 @@ def load_config():
     # Ambil nilai Timbangan Rockwell / Universal
     tb_enable = config.getboolean("TIMBANGAN_CONFIG", "ENABLE", fallback=True)
     tb_line = config.get("TIMBANGAN_CONFIG", "LINE_NO", fallback="14")
-    tb_url = config.get("TIMBANGAN_CONFIG", "API_URL", fallback="https://api.pms.yuasa.seavihive.com/api/fix-scanner-masterbox")
-    tb_retry_url = config.get("TIMBANGAN_CONFIG", "RETRY_API_URL", fallback="https://api.pms.yuasa.seavihive.com/api/fix-scanner-masterbox-retry")
+    tb_url = resolve_url(config.get("TIMBANGAN_CONFIG", "API_URL", fallback="/api/fix-scanner-masterbox"))
+    tb_retry_url = resolve_url(config.get("TIMBANGAN_CONFIG", "RETRY_API_URL", fallback="/api/fix-scanner-masterbox-retry"))
     tb_width = config.getint("TIMBANGAN_CONFIG", "LABEL_WIDTH", fallback=75)
     tb_height = config.getint("TIMBANGAN_CONFIG", "LABEL_HEIGHT", fallback=100)
     tb_gap = config.getint("TIMBANGAN_CONFIG", "LABEL_GAP", fallback=2)
@@ -366,10 +409,12 @@ def load_config():
     tb_plc_port = config.get("TIMBANGAN_CONFIG", "PLC_PORT", fallback="COM6").strip()
     tb_plc_baud = config.getint("TIMBANGAN_CONFIG", "PLC_BAUD", fallback=9600)
     
+    tb_trigger_mode = config.get("TIMBANGAN_CONFIG", "TRIGGER_MODE", fallback="auto").strip().lower()
     tb_tag_weight = config.get("TIMBANGAN_CONFIG", "TAG_WEIGHT", fallback="Recent_Weight").strip()
     tb_tag_qty = config.get("TIMBANGAN_CONFIG", "TAG_QTY", fallback="Recent_Qty").strip()
     tb_tag_type = config.get("TIMBANGAN_CONFIG", "TAG_TYPE", fallback="Product_Type").strip()
     tb_tag_totalizer = config.get("TIMBANGAN_CONFIG", "TAG_TOTALIZER", fallback="Totalizer_Box").strip()
+    tb_tag_sensor = config.get("TIMBANGAN_CONFIG", "TAG_SENSOR", fallback="_IO_EM_DI_00").strip()
     
     # Parse List Alamat Downtime
     dt_addresses = []
@@ -395,21 +440,23 @@ def load_config():
         
     downtime_log_path = os.path.join(save_dir, dt_log_file)
     
-    return (scanner_enable, line_no, scanner_port, scanner_baud, scanner_url, 
+    return (scanner_enable, line_no, scanner_port, scanner_baud, scanner_url, scanner_remove_url, scanner_remove_addr,
+            scanner2_enable, line_no2, scanner_port2, scanner_baud2, scanner_url2, scanner2_remove_url, scanner2_remove_addr,
             dt_enable, dt_line_no, dt_url, downtime_log_path, dt_conn_mode, dt_plc_ip, dt_plc_port, dt_plc_baud, dt_addresses,
             pr_enable, pr_name, pr_url, pr_retry_url, pr_monitor_addr, pr_api_line, pr_label_line,
             pr_conn_mode, pr_plc_ip, pr_width, pr_height, pr_gap, pr_orientation,
             tb_enable, tb_line, tb_url, tb_retry_url, tb_width, tb_height, tb_gap, tb_orientation,
-            tb_conn_mode, tb_plc_ip, tb_plc_port, tb_plc_baud, tb_tag_weight, tb_tag_qty, tb_tag_type, tb_tag_totalizer)
+            tb_conn_mode, tb_plc_ip, tb_plc_port, tb_plc_baud, tb_trigger_mode, tb_tag_weight, tb_tag_qty, tb_tag_type, tb_tag_totalizer, tb_tag_sensor)
 
-(SCANNER_ENABLE, LINE_NO, PORT_SCANNER, BAUD_RATE, API_URL, 
+(SCANNER_ENABLE, LINE_NO, PORT_SCANNER, BAUD_RATE, API_URL, SCANNER_REMOVE_API_URL, SCANNER_REMOVE_ADDR,
+ SCANNER2_ENABLE, LINE_NO2, PORT_SCANNER2, BAUD_RATE2, API_URL2, SCANNER2_REMOVE_API_URL, SCANNER2_REMOVE_ADDR,
  DOWNTIME_ENABLE, DOWNTIME_LINE_NO, DOWNTIME_API_URL, DOWNTIME_LOG_PATH, DOWNTIME_CONN_MODE, DOWNTIME_PLC_IP, DOWNTIME_PLC_PORT, DOWNTIME_PLC_BAUD, DOWNTIME_ADDRESSES,
  PRINTER_ENABLE, PRINTER_NAME, PRINTER_API_URL, PRINTER_RETRY_API_URL, PRINTER_MONITOR_ADDR, PRINTER_API_LINE_NO, PRINTER_LABEL_LINE_NO,
  PRINTER_CONN_MODE, PRINTER_PLC_IP, PRINTER_WIDTH, PRINTER_HEIGHT, PRINTER_GAP, PRINTER_ORIENTATION,
  TIMBANGAN_ENABLE, TIMBANGAN_LINE_NO, TIMBANGAN_API_URL, TIMBANGAN_RETRY_API_URL, 
  TIMBANGAN_WIDTH, TIMBANGAN_HEIGHT, TIMBANGAN_GAP, TIMBANGAN_ORIENTATION,
- TIMBANGAN_CONN_MODE, TIMBANGAN_PLC_IP, TIMBANGAN_PLC_PORT, TIMBANGAN_PLC_BAUD,
- TIMBANGAN_TAG_WEIGHT, TIMBANGAN_TAG_QTY, TIMBANGAN_TAG_TYPE, TIMBANGAN_TAG_TOTALIZER) = load_config()
+ TIMBANGAN_CONN_MODE, TIMBANGAN_PLC_IP, TIMBANGAN_PLC_PORT, TIMBANGAN_PLC_BAUD, TIMBANGAN_TRIGGER_MODE,
+ TIMBANGAN_TAG_WEIGHT, TIMBANGAN_TAG_QTY, TIMBANGAN_TAG_TYPE, TIMBANGAN_TAG_TOTALIZER, TIMBANGAN_TAG_SENSOR) = load_config()
 
 # Load http port configuration directly
 try:
@@ -518,10 +565,19 @@ class ScannerApp(tk.Tk):
         self.running = True
         self.sim_counter = 0
         
-        # State variables Scanner
+        # State variables Scanner 1
         self.ser = None
         self.scanner_status = tk.StringVar(value="MEMULAI...")
         self.scanner_color = tk.StringVar(value="#64748b")
+        
+        # State variables Scanner 2
+        self.ser2 = None
+        self.scanner2_status = tk.StringVar(value="SCANNER 2 INACTIVE" if not SCANNER2_ENABLE else "MEMULAI...")
+        self.scanner2_color = tk.StringVar(value="#64748b")
+        
+        # Remove Mode Flags (diset oleh PLC monitor loop)
+        self.remove_mode = False    # True = Scanner 1 dalam mode Remove from Masterbox
+        self.remove_mode2 = False   # True = Scanner 2 dalam mode Remove from Masterbox
         
         # State variables Downtime PLC
         self.plc_status = tk.StringVar(value="DOWNTIME INACTIVE" if not DOWNTIME_ENABLE else "MENGHUBUNGKAN...")
@@ -541,13 +597,21 @@ class ScannerApp(tk.Tk):
         self.create_widgets()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         
-        # Start Scanner Thread
+        # Start Scanner 1 Thread
         if SCANNER_ENABLE:
             self.scanner_thread = threading.Thread(target=self.scanner_loop, daemon=True)
             self.scanner_thread.start()
         else:
             self.scanner_status.set("SCANNER INACTIVE")
             self.scanner_color.set("#64748b")
+        
+        # Start Scanner 2 Thread
+        if SCANNER2_ENABLE:
+            self.scanner2_thread = threading.Thread(target=self.scanner2_loop, daemon=True)
+            self.scanner2_thread.start()
+        else:
+            self.scanner2_status.set("SCANNER 2 INACTIVE")
+            self.scanner2_color.set("#64748b")
         
         # Start PLC Downtime Thread
         if DOWNTIME_ENABLE or (PRINTER_ENABLE and PRINTER_CONN_MODE == "cx_programmer"):
@@ -601,8 +665,8 @@ class ScannerApp(tk.Tk):
         status_panel = tk.Frame(self, bg="#f1f5f9")
         status_panel.pack(fill=tk.X, padx=15, pady=8)
         
-        # Kolom 1: Scanner
-        scanner_frame = tk.LabelFrame(status_panel, text="Koneksi QR Scanner", font=("Arial", 8, "bold"), fg="#475569", bg="#f1f5f9", padx=8, pady=4)
+        # Kolom 1a: Scanner 1
+        scanner_frame = tk.LabelFrame(status_panel, text="QR Scanner 1", font=("Arial", 8, "bold"), fg="#475569", bg="#f1f5f9", padx=8, pady=4)
         scanner_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=2)
         
         self.scanner_status_box = tk.Label(scanner_frame, textvariable=self.scanner_status, font=("Arial", 8, "bold"), fg="#ffffff", bg=self.scanner_color.get(), height=2)
@@ -610,6 +674,16 @@ class ScannerApp(tk.Tk):
         
         lbl_scanner_info = tk.Label(scanner_frame, text=f"Port: {PORT_SCANNER} | Baud: {BAUD_RATE}", font=("Arial", 7), fg="#64748b", bg="#f1f5f9")
         lbl_scanner_info.pack(anchor=tk.W)
+        
+        # Kolom 1b: Scanner 2
+        scanner2_frame = tk.LabelFrame(status_panel, text="QR Scanner 2", font=("Arial", 8, "bold"), fg="#475569", bg="#f1f5f9", padx=8, pady=4)
+        scanner2_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=2)
+        
+        self.scanner2_status_box = tk.Label(scanner2_frame, textvariable=self.scanner2_status, font=("Arial", 8, "bold"), fg="#ffffff", bg=self.scanner2_color.get(), height=2)
+        self.scanner2_status_box.pack(fill=tk.X, pady=1)
+        
+        lbl_scanner2_info = tk.Label(scanner2_frame, text=f"Port: {PORT_SCANNER2} | Baud: {BAUD_RATE2}", font=("Arial", 7), fg="#64748b", bg="#f1f5f9")
+        lbl_scanner2_info.pack(anchor=tk.W)
         
         # Kolom 2: PLC Downtime
         plc_frame = tk.LabelFrame(status_panel, text="PLC Downtime", font=("Arial", 8, "bold"), fg="#475569", bg="#f1f5f9", padx=8, pady=4)
@@ -708,6 +782,11 @@ class ScannerApp(tk.Tk):
         self.scanner_status.set(text)
         self.scanner_color.set(color)
         self.scanner_status_box.configure(bg=color)
+        
+    def set_scanner2_status(self, text, color):
+        self.scanner2_status.set(text)
+        self.scanner2_color.set(color)
+        self.scanner2_status_box.configure(bg=color)
         
     def set_plc_status(self, text, color, info_state):
         self.plc_status.set(text)
@@ -830,30 +909,79 @@ class ScannerApp(tk.Tk):
         except ValueError:
             messagebox.showerror("Input Error", "Isian Berat harus angka desimal dan Quantity harus angka bulat!")
 
+    def trigger_scanner_error_alert(self):
+        """Mengirim perintah SSI Host Command untuk BEEP Slow Warble dan LED Merah ke Scanner 1"""
+        try:
+            if hasattr(self, 'ser') and self.ser and self.ser.is_open:
+                # 1. Turn on Red LED (0x02)
+                self.ser.write(b'\x00')
+                time.sleep(0.05)
+                packet_led = [0x05, 0xE7, 0x04, 0x00, 0x02]
+                chk_led = (~sum(packet_led) + 1) & 0xFFFF
+                packet_led.extend([(chk_led >> 8) & 0xFF, chk_led & 0xFF])
+                self.ser.write(bytes(packet_led))
+                
+                # 2. Play Beep 22 / Slow Warble (0x15)
+                time.sleep(0.05)
+                self.ser.write(b'\x00')
+                time.sleep(0.05)
+                packet_beep = [0x05, 0xE6, 0x04, 0x00, 0x15]
+                chk_beep = (~sum(packet_beep) + 1) & 0xFFFF
+                packet_beep.extend([(chk_beep >> 8) & 0xFF, chk_beep & 0xFF])
+                self.ser.write(bytes(packet_beep))
+                
+                # Turn off LED after 2 seconds via background thread
+                def turn_off():
+                    time.sleep(2)
+                    try:
+                        if hasattr(self, 'ser') and self.ser and self.ser.is_open:
+                            self.ser.write(b'\x00')
+                            time.sleep(0.05)
+                            packet_led_off = [0x05, 0xE8, 0x04, 0x00, 0x02]
+                            chk_led_off = (~sum(packet_led_off) + 1) & 0xFFFF
+                            packet_led_off.extend([(chk_led_off >> 8) & 0xFF, chk_led_off & 0xFF])
+                            self.ser.write(bytes(packet_led_off))
+                    except Exception as ex:
+                        logging.error(f"[SCANNER] Gagal mematikan LED Merah: {ex}")
+                threading.Thread(target=turn_off, daemon=True).start()
+        except Exception as e:
+            logging.error(f"[SCANNER] Gagal memutar alarm suara scanner: {e}")
+
     # --- HTTP API & RAW PRINT LOGIC (SCANNER) ---
     def send_scanner_api(self, pack_code):
+        # Tentukan URL berdasarkan mode Remove atau Normal
+        if self.remove_mode and SCANNER_REMOVE_API_URL:
+            url = SCANNER_REMOVE_API_URL
+            mode_label = "REMOVE"
+        else:
+            url = API_URL
+            mode_label = "NORMAL"
+            
         payload = {
             "line_no": str(LINE_NO),
             "pack_code": pack_code
         }
-        logging.info(f"[SCANNER] Mengirim data ke API: {payload}")
+        logging.info(f"[SCANNER] [{mode_label}] Mengirim data ke API: {payload} -> {url}")
         
         try:
             start_time = time.time()
             headers = {'Content-Type': 'application/json'}
-            response = requests.post(API_URL, json=payload, headers=headers, timeout=10)
+            response = requests.post(url, json=payload, headers=headers, timeout=10, verify=False)
             duration = time.time() - start_time
             res_body = response.text.strip()
             
             if response.status_code == 200:
-                logging.info(f"[SCANNER] API Sukses ({response.status_code}) dalam {duration:.2f}s. Respon: {res_body}")
-                self.after(0, self.add_history, f"SCAN OK -> QR: {pack_code} (200)")
+                logging.info(f"[SCANNER] [{mode_label}] API Sukses ({response.status_code}) dalam {duration:.2f}s. Respon: {res_body}")
+                prefix = "REMOVE OK" if self.remove_mode else "SCAN OK"
+                self.after(0, self.add_history, f"{prefix} -> QR: {pack_code} (200)")
             else:
-                logging.error(f"[SCANNER] API Gagal ({response.status_code}). Respon: {res_body}")
+                logging.error(f"[SCANNER] [{mode_label}] API Gagal ({response.status_code}). Respon: {res_body}")
                 self.after(0, self.add_history, f"SCAN ERROR {response.status_code} -> QR: {pack_code}")
+                self.trigger_scanner_error_alert()
         except requests.exceptions.RequestException as e:
-            logging.error(f"[SCANNER] Error Jaringan: {e}")
+            logging.error(f"[SCANNER] [{mode_label}] Error Jaringan: {e}")
             self.after(0, self.add_history, f"SCAN JARINGAN ERROR -> Gagal Kirim QR: {pack_code}")
+            self.trigger_scanner_error_alert()
             
     def scanner_loop(self):
         while self.running:
@@ -867,7 +995,20 @@ class ScannerApp(tk.Tk):
                 self.after(0, self.set_scanner_status, "SCANNER READY (TERHUBUNG)", "#22c55e")
                 self.after(0, self.add_history, "Scanner: Siap digunakan.")
                 
+                last_remove_mode = False
                 while self.running:
+                    # Update status warna jika mode berubah
+                    if self.remove_mode != last_remove_mode:
+                        last_remove_mode = self.remove_mode
+                        if self.remove_mode:
+                            self.after(0, self.set_scanner_status, "⚠ MODE REMOVE AKTIF", "#a855f7")
+                            self.after(0, self.add_history, "Scanner: MODE REMOVE FROM MASTERBOX aktif!")
+                            logging.info("[SCANNER] Mode REMOVE FROM MASTERBOX diaktifkan.")
+                        else:
+                            self.after(0, self.set_scanner_status, "SCANNER READY (TERHUBUNG)", "#22c55e")
+                            self.after(0, self.add_history, "Scanner: Kembali ke mode NORMAL.")
+                            logging.info("[SCANNER] Mode kembali ke NORMAL.")
+                    
                     if self.ser.in_waiting > 0:
                         try:
                             barcode_raw = self.ser.readline()
@@ -875,13 +1016,21 @@ class ScannerApp(tk.Tk):
                             
                             if barcode_text:
                                 logging.info(f"[SCANNER] Terbaca: {barcode_text}")
-                                self.after(0, self.add_history, f"SCAN: {barcode_text}")
+                                mode_tag = "[REMOVE]" if self.remove_mode else ""
+                                self.after(0, self.add_history, f"SCAN{mode_tag}: {barcode_text}")
                                 self.after(0, self.set_scanner_status, "MENGIRIM KE API...", "#3b82f6")
                                 
                                 api_thread = threading.Thread(target=self.send_scanner_api, args=(barcode_text,), daemon=True)
                                 api_thread.start()
                                 
-                                self.after(1500, lambda: self.set_scanner_status("SCANNER READY (TERHUBUNG)", "#22c55e") if self.ser and self.ser.is_open else None)
+                                # Kembalikan ke status yang sesuai mode
+                                def restore_status_1():
+                                    if self.ser and self.ser.is_open:
+                                        if self.remove_mode:
+                                            self.set_scanner_status("⚠ MODE REMOVE AKTIF", "#a855f7")
+                                        else:
+                                            self.set_scanner_status("SCANNER READY (TERHUBUNG)", "#22c55e")
+                                self.after(1500, restore_status_1)
                         except Exception as e:
                             logging.error(f"[SCANNER] Error baca data: {e}")
                             break
@@ -900,6 +1049,105 @@ class ScannerApp(tk.Tk):
                     self.ser = None
                     logging.info("[SCANNER] Serial ditutup.")
 
+    # --- HTTP API & RAW PRINT LOGIC (SCANNER 2) ---
+    def send_scanner2_api(self, pack_code):
+        # Tentukan URL berdasarkan mode Remove atau Normal
+        if self.remove_mode2 and SCANNER2_REMOVE_API_URL:
+            url = SCANNER2_REMOVE_API_URL
+            mode_label = "REMOVE"
+        else:
+            url = API_URL2
+            mode_label = "NORMAL"
+            
+        payload = {
+            "line_no": str(LINE_NO2),
+            "pack_code": pack_code
+        }
+        logging.info(f"[SCANNER2] [{mode_label}] Mengirim data ke API: {payload} -> {url}")
+        
+        try:
+            start_time = time.time()
+            headers = {'Content-Type': 'application/json'}
+            response = requests.post(url, json=payload, headers=headers, timeout=10, verify=False)
+            duration = time.time() - start_time
+            res_body = response.text.strip()
+            
+            if response.status_code == 200:
+                logging.info(f"[SCANNER2] [{mode_label}] API Sukses ({response.status_code}) dalam {duration:.2f}s. Respon: {res_body}")
+                prefix = "REMOVE2 OK" if self.remove_mode2 else "SCAN2 OK"
+                self.after(0, self.add_history, f"{prefix} -> QR: {pack_code} (200)")
+            else:
+                logging.error(f"[SCANNER2] [{mode_label}] API Gagal ({response.status_code}). Respon: {res_body}")
+                self.after(0, self.add_history, f"SCAN2 ERROR {response.status_code} -> QR: {pack_code}")
+        except requests.exceptions.RequestException as e:
+            logging.error(f"[SCANNER2] [{mode_label}] Error Jaringan: {e}")
+            self.after(0, self.add_history, f"SCAN2 JARINGAN ERROR -> Gagal Kirim QR: {pack_code}")
+
+    def scanner2_loop(self):
+        while self.running:
+            self.after(0, self.set_scanner2_status, f"MENGHUBUNGKAN KE {PORT_SCANNER2}...", "#f59e0b")
+            self.after(0, self.add_history, f"Scanner 2: Menghubungkan ke {PORT_SCANNER2}...")
+            logging.info(f"[SCANNER2] Mencoba membuka port {PORT_SCANNER2}...")
+            
+            try:
+                self.ser2 = serial.Serial(PORT_SCANNER2, BAUD_RATE2, timeout=1)
+                logging.info(f"[SCANNER2] Berhasil terhubung ke port {PORT_SCANNER2}.")
+                self.after(0, self.set_scanner2_status, "SCANNER 2 READY", "#22c55e")
+                self.after(0, self.add_history, "Scanner 2: Siap digunakan.")
+                
+                last_remove_mode2 = False
+                while self.running:
+                    # Update status warna jika mode berubah
+                    if self.remove_mode2 != last_remove_mode2:
+                        last_remove_mode2 = self.remove_mode2
+                        if self.remove_mode2:
+                            self.after(0, self.set_scanner2_status, "⚠ REMOVE AKTIF", "#a855f7")
+                            self.after(0, self.add_history, "Scanner 2: MODE REMOVE FROM MASTERBOX aktif!")
+                            logging.info("[SCANNER2] Mode REMOVE FROM MASTERBOX diaktifkan.")
+                        else:
+                            self.after(0, self.set_scanner2_status, "SCANNER 2 READY", "#22c55e")
+                            self.after(0, self.add_history, "Scanner 2: Kembali ke mode NORMAL.")
+                            logging.info("[SCANNER2] Mode kembali ke NORMAL.")
+                    
+                    if self.ser2.in_waiting > 0:
+                        try:
+                            barcode_raw = self.ser2.readline()
+                            barcode_text = barcode_raw.decode('utf-8').strip()
+                            
+                            if barcode_text:
+                                logging.info(f"[SCANNER2] Terbaca: {barcode_text}")
+                                mode_tag = "[REMOVE]" if self.remove_mode2 else ""
+                                self.after(0, self.add_history, f"SCAN2{mode_tag}: {barcode_text}")
+                                self.after(0, self.set_scanner2_status, "MENGIRIM KE API...", "#3b82f6")
+                                
+                                api_thread = threading.Thread(target=self.send_scanner2_api, args=(barcode_text,), daemon=True)
+                                api_thread.start()
+                                
+                                def restore_status_2():
+                                    if self.ser2 and self.ser2.is_open:
+                                        if self.remove_mode2:
+                                            self.set_scanner2_status("⚠ REMOVE AKTIF", "#a855f7")
+                                        else:
+                                            self.set_scanner2_status("SCANNER 2 READY", "#22c55e")
+                                self.after(1500, restore_status_2)
+                        except Exception as e:
+                            logging.error(f"[SCANNER2] Error baca data: {e}")
+                            break
+                    time.sleep(0.05)
+            except serial.SerialException as e:
+                logging.error(f"[SCANNER2] Gagal membuka port {PORT_SCANNER2}: {e}")
+                self.after(0, self.set_scanner2_status, "TERPUTUS - RECONNECTING...", "#ef4444")
+                self.after(0, self.add_history, f"Scanner 2: Gagal membuka {PORT_SCANNER2} (Mencoba lagi...)")
+                for _ in range(50):
+                    if not self.running:
+                        break
+                    time.sleep(0.1)
+            finally:
+                if self.ser2 and self.ser2.is_open:
+                    self.ser2.close()
+                    self.ser2 = None
+                    logging.info("[SCANNER2] Serial ditutup.")
+
     # --- HTTP API & RAW PRINT LOGIC (DOWNTIME PLC) ---
     def send_downtime_api(self, symbol_name, address, status, comment, timestamp):
         payload = {
@@ -915,7 +1163,7 @@ class ScannerApp(tk.Tk):
         try:
             start_time = time.time()
             headers = {"Content-Type": "application/json"}
-            response = requests.post(DOWNTIME_API_URL, json=payload, headers=headers, timeout=5)
+            response = requests.post(DOWNTIME_API_URL, json=payload, headers=headers, timeout=5, verify=False)
             duration = time.time() - start_time
             res_body = response.text.strip()
             
@@ -942,7 +1190,7 @@ class ScannerApp(tk.Tk):
         
         try:
             start_time = time.time()
-            response = requests.post(url, json=payload, timeout=8)
+            response = requests.post(url, json=payload, timeout=8, verify=False)
             duration = time.time() - start_time
             
             if response.status_code == 200:
@@ -958,14 +1206,21 @@ class ScannerApp(tk.Tk):
                 except:
                     date_str = datetime.now().strftime("%d-%b-%Y")
                     
-                raw_part_code = metadata.get("part_code", "-")
-                parts = [p.strip() for p in raw_part_code.split(" ") if p.strip()]
-                if len(parts) >= 2:
-                    part_code = parts[0]
-                    batt_type = " ".join(parts[1:])
-                else:
-                    part_code = raw_part_code
-                    batt_type = "-"
+                raw_part_code = (
+                    res_data.get("partCode") or 
+                    metadata.get("part_code") or 
+                    data.get("partCode") or 
+                    "-"
+                )
+                part_code = raw_part_code.split(" ")[0] if raw_part_code != "-" else "-"
+
+                batt_type = (
+                    res_data.get("partName") or 
+                    res_data.get("part_name") or 
+                    metadata.get("partName") or 
+                    data.get("partName") or 
+                    "-"
+                )
                     
                 customer = (
                     metadata.get("customer") or 
@@ -986,12 +1241,32 @@ class ScannerApp(tk.Tk):
                     "-"
                 )
                 
+                code_production = (
+                    metadata.get("codeProduction") or 
+                    metadata.get("code_production") or 
+                    data.get("codeProduction") or 
+                    data.get("code_production") or 
+                    res_data.get("codeProduction") or 
+                    res_data.get("code_production") or 
+                    "-"
+                )
+                code_production_qty = (
+                    metadata.get("codeProductionQuantity") or 
+                    metadata.get("code_production_quantity") or 
+                    data.get("codeProductionQuantity") or 
+                    data.get("code_production_quantity") or 
+                    res_data.get("codeProductionQuantity") or 
+                    res_data.get("code_production_quantity") or 
+                    ""
+                )
+
                 pack_qty = (
                     res_data.get("quantityPack") or 
                     data.get("quantityPack") or 
                     metadata.get("quantityPack") or 
                     metadata.get("quantity_pack") or 
                     metadata.get("masterbox") or 
+                    metadata.get("total_masterbox") or 
                     None
                 )
                 pcs_qty = (
@@ -1003,12 +1278,21 @@ class ScannerApp(tk.Tk):
                     None
                 )
                 
-                if pack_qty is not None and pcs_qty is not None:
-                    quantity_formatted = f"{pack_qty} Masterbox / {pcs_qty} Pcs"
+                if pcs_qty is not None and pack_qty is not None:
+                    quantity_formatted = f"{pcs_qty} pcs - {pack_qty} pkgs"
                 elif pcs_qty is not None:
-                    quantity_formatted = f"{pcs_qty} Pcs"
+                    quantity_formatted = f"{pcs_qty} pcs"
+                elif pack_qty is not None:
+                    quantity_formatted = f"{pack_qty} pkgs"
                 else:
-                    quantity_formatted = str(metadata.get("quantity", "0 Pcs"))
+                    quantity_formatted = str(metadata.get("quantity", "0 pcs"))
+                
+                prd_shift = (
+                    res_data.get("prodShiftMc") or 
+                    metadata.get("prodShiftMc") or 
+                    data.get("prodShiftMc") or 
+                    f"{date_str}/I/{PRINTER_LABEL_LINE_NO}"
+                )
                 
                 parsed_data = {
                     "code": data.get("code", "-"),
@@ -1017,7 +1301,10 @@ class ScannerApp(tk.Tk):
                     "quantity": quantity_formatted,
                     "date_str": date_str,
                     "customer": customer,
-                    "order_no": order_no
+                    "order_no": order_no,
+                    "prd_shift": prd_shift,
+                    "code_production": code_production,
+                    "code_production_qty": code_production_qty
                 }
                 
                 logging.info(f"[PRINTER] API Sukses ({response.status_code}) dalam {duration:.2f}s. Pallet: {parsed_data['code']}")
@@ -1051,7 +1338,29 @@ class ScannerApp(tk.Tk):
         date_str = data_dict.get("date_str", "-")
         customer = data_dict.get("customer", "AFM (PT. SANTI YOGA)")
         order_no = data_dict.get("order_no", "-")
+        prd_shift = data_dict.get("prd_shift", "-")
+        code_production = data_dict.get("code_production", "-")
+        code_production_qty = data_dict.get("code_production_qty", "")
         
+        # Parse multi-code production and quantities
+        prod_codes = [c.strip() for c in str(code_production).split(',') if c.strip()]
+        prod_qtys = [q.strip() for q in str(code_production_qty).split(',') if q.strip()]
+        
+        if not prod_codes:
+            prod_codes = ["-"]
+            
+        formatted_prod_items = []
+        for idx, c_item in enumerate(prod_codes):
+            q_item = prod_qtys[idx] if idx < len(prod_qtys) else (prod_qtys[0] if prod_qtys else "")
+            if q_item and q_item != "-":
+                formatted_prod_items.append(f"{c_item} - {q_item} pcs")
+            else:
+                formatted_prod_items.append(c_item)
+            
+        prod_tspl = f'TEXT 25,294,"0",0,8,8,"Kode Prod"\nTEXT 140,294,"0",0,8,8,": {formatted_prod_items[0]}"'
+        if len(formatted_prod_items) > 1:
+            prod_tspl += f'\nTEXT 140,322,"0",0,8,8,"  {formatted_prod_items[1]}"'
+            
         w_dots = int(PRINTER_WIDTH * 8)
         
         if PRINTER_WIDTH < 55:
@@ -1060,34 +1369,37 @@ class ScannerApp(tk.Tk):
 GAP {PRINTER_GAP} mm, 0 mm
 DIRECTION 1
 CLS
-TEXT 20,10,"2",0,1,1,"PT. YUASA BATTERY INDONESIA"
-BAR 20,28,280,2
-QRCODE 15,45,M,3,A,0,"{code}"
-TEXT 105,45,"1",0,1,1,"Group Code : {code}"
-TEXT 105,65,"1",0,1,1,"Order No.  : {order_no}"
-TEXT 105,85,"1",0,1,1,"Customer   : {customer}"
-TEXT 105,105,"1",0,1,1,"Part Code  : {part_code}"
-TEXT 105,125,"1",0,1,1,"Batt. Type : {batt_type}"
-TEXT 105,145,"1",0,1,1,"Quantity   : {quantity} PCS"
-TEXT 105,165,"1",0,1,1,"Prod/Shf/Mc: {date_str}/I/{PRINTER_LABEL_LINE_NO}"
+QRCODE 15,35,M,3,A,0,"{code}"
+TEXT 105,35,"1",0,1,1,"Group Code : {code}"
+TEXT 105,55,"1",0,1,1,"Order No.  : {order_no}"
+TEXT 105,75,"1",0,1,1,"Customer   : {customer}"
+TEXT 105,95,"1",0,1,1,"Part Code  : {part_code}"
+TEXT 105,115,"1",0,1,1,"Batt. Type : {batt_type}"
+TEXT 105,135,"1",0,1,1,"Quantity   : {quantity}"
+TEXT 105,155,"1",0,1,1,"Prod/Shf/Mc: {date_str}/I/{PRINTER_LABEL_LINE_NO}"
 PRINT 1
 """
         elif PRINTER_HEIGHT <= 65 or PRINTER_WIDTH <= 80:
-            # Template Sedang (70mm x 50mm) Sesuai Gambar 2 (Pallet Label)
+            # Template Sedang (70mm x 50mm) Pallet Label - Top Margin Y=95, Font 8,8 (SAME AS MASTERBOX!)
             tspl_command = f"""SIZE {PRINTER_WIDTH} mm, {PRINTER_HEIGHT} mm
 GAP {PRINTER_GAP} mm, 0 mm
 DIRECTION 1
 CLS
-TEXT 20,100,"0",0,12,12,"PT. YUASA BATTERY INDONESIA"
-BAR 20,128,440,3
-QRCODE 20,160,M,5,A,0,"{code}"
-TEXT 180,155,"0",0,7,7,"Group Code : {code}"
-TEXT 180,188,"0",0,7,7,"Order No.  : {order_no}"
-TEXT 180,221,"0",0,7,7,"Customer   : {customer}"
-TEXT 180,254,"0",0,7,7,"Part Code  : {part_code}"
-TEXT 180,287,"0",0,7,7,"Batt. Type : {batt_type}"
-TEXT 180,320,"0",0,7,7,"Quantity   : {quantity}"
-TEXT 180,353,"0",0,7,7,"Prod. /Shift/Mc : {date_str}/I/{PRINTER_LABEL_LINE_NO}"
+QRCODE 25,95,H,3,A,0,M2,S7,"{code}"
+TEXT 160,95,"0",0,8,8,"{code}"
+TEXT 160,123,"0",0,8,8,"Order No."
+TEXT 250,123,"0",0,8,8,": {order_no}"
+TEXT 160,151,"0",0,8,8,"Customer"
+TEXT 250,151,"0",0,8,8,": {customer}"
+TEXT 160,179,"0",0,8,8,"Part Code"
+TEXT 250,179,"0",0,8,8,": {part_code}"
+TEXT 25,210,"0",0,8,8,"Batt. Type"
+TEXT 140,210,"0",0,8,8,": {batt_type}"
+TEXT 25,238,"0",0,8,8,"Quantity"
+TEXT 140,238,"0",0,8,8,": {quantity}"
+TEXT 25,266,"0",0,8,8,"Prd/Shift/Mc"
+TEXT 140,266,"0",0,8,8,": {prd_shift}"
+{prod_tspl}
 PRINT 1
 """
         else:
@@ -1164,13 +1476,14 @@ PRINT 1
             self.set_printer_status("PRINTER NOT FOUND", "#ef4444", f"Mencari: {PRINTER_NAME}")
 
     # --- HTTP API & RAW PRINT LOGIC (MASTER BOX) ---
-    def execute_physical_print_masterbox(self, code, part_code, batt_type, weight, quantity, date_str, code_production="-"):
+    def execute_physical_print_masterbox(self, code, part_code, batt_type, weight, quantity, date_str, time_str="-", code_production="-", code_finishing="-", code_production_qty=""):
         """Mencetak stiker QR Master Box (Layout sesuai gambar landscape)"""
         if not PYWIN32_AVAILABLE:
             logging.error("[MASTERBOX] Library win32print missing. Cetak fisik dibatalkan.")
             return
             
         w_dots = int(TIMBANGAN_WIDTH * 8)
+        qty_weight_str = f"{quantity} Pcs / {weight} KG"
         
         if TIMBANGAN_WIDTH < 55:
             # Layout Kecil 4x3 cm
@@ -1178,39 +1491,71 @@ PRINT 1
 GAP {TIMBANGAN_GAP} mm, 0 mm
 DIRECTION 1
 CLS
-TEXT 20,10,"2",0,1,1,"PT. YUASA BATTERY INDONESIA"
-BAR 20,28,280,2
-QRCODE 15,45,M,3,A,0,"{code}"
-TEXT 105,45,"1",0,1,1,"{code}"
-TEXT 105,65,"1",0,1,1,"Part Code  : {part_code}"
-TEXT 105,85,"1",0,1,1,"TYPE       : {batt_type}"
-TEXT 105,105,"1",0,1,1,"Quantity   : {quantity} Pcs"
-TEXT 105,125,"1",0,1,1,"BERAT      : {weight} KG"
-TEXT 105,145,"1",0,1,1,"Prd/Shf/Mc : {date_str}/I/{TIMBANGAN_LINE_NO}"
-TEXT 105,165,"1",0,1,1,"Kode Prod  : {code_production}"
+TEXT 15,5,"1",0,1,1,"PT. YUASA BATTERY INDONESIA"
+BAR 15,20,280,2
+QRCODE 10,28,H,3,A,0,"{code}"
+TEXT 95,28,"1",0,1,1,"{code}"
+TEXT 95,44,"1",0,1,1,"Part Code"
+TEXT 165,44,"1",0,1,1,": {part_code}"
+TEXT 95,61,"1",0,1,1,"TYPE"
+TEXT 165,61,"1",0,1,1,": {batt_type}"
+TEXT 95,78,"1",0,1,1,"Qty / Berat"
+TEXT 165,78,"1",0,1,1,": {qty_weight_str}"
+TEXT 95,95,"1",0,1,1,"Prd/Shift/Mc"
+TEXT 165,95,"1",0,1,1,": {date_str}"
+TEXT 95,112,"1",0,1,1,"Waktu"
+TEXT 165,112,"1",0,1,1,": {time_str}"
+TEXT 95,129,"1",0,1,1,"Kode Prod"
+TEXT 165,129,"1",0,1,1,": {code_production}"
+TEXT 95,146,"1",0,1,1,"Kode FNS"
+TEXT 165,146,"1",0,1,1,": {code_finishing}"
 PRINT 2
 """
         elif TIMBANGAN_HEIGHT <= 65 or TIMBANGAN_WIDTH <= 80:
-            # Layout Sedang (70mm x 50mm) Sesuai Gambar 1 (Master Box Label dengan Sedikit Margin Atas Y=40)
+            # Parse multi-code production and quantities
+            prod_codes = [c.strip() for c in str(code_production).split(',') if c.strip()]
+            prod_qtys = [q.strip() for q in str(code_production_qty).split(',') if q.strip()]
+            
+            if not prod_codes:
+                prod_codes = ["-"]
+                
+            formatted_prod_items = []
+            for idx, c_item in enumerate(prod_codes):
+                q_item = prod_qtys[idx] if idx < len(prod_qtys) else (prod_qtys[0] if prod_qtys else "")
+                if q_item and q_item != "-":
+                    formatted_prod_items.append(f"{c_item} - {q_item} pcs")
+                else:
+                    formatted_prod_items.append(c_item)
+                
+            prod_tspl = f'TEXT 185,260,"0",0,8,8,"Kode Prod"\nTEXT 285,260,"0",0,8,8,": {formatted_prod_items[0]}"'
+            if len(formatted_prod_items) > 1:
+                prod_tspl += f'\nTEXT 285,290,"0",0,8,8,"  {formatted_prod_items[1]}"'
+
+            # Layout Sedang (70mm x 50mm) Masterbox - Header code font 8,8 + Text X=185, Colon X=285
             tspl_command = f"""SIZE {TIMBANGAN_WIDTH} mm, {TIMBANGAN_HEIGHT} mm
 GAP {TIMBANGAN_GAP} mm, 0 mm
 DIRECTION 1
 CLS
-TEXT 20,40,"0",0,12,12,"PT. YUASA BATTERY INDONESIA"
-BAR 20,68,440,3
-QRCODE 20,100,M,5,A,0,"{code}"
-TEXT 180,95,"0",0,8,8,"{code}"
-TEXT 180,135,"0",0,7,7,"Part Code  : {part_code}"
-TEXT 180,175,"0",0,7,7,"TYPE       : {batt_type}"
-TEXT 180,215,"0",0,7,7,"Quantity   : {quantity} Pcs    BERAT : {weight} KG"
-TEXT 180,255,"0",0,7,7,"Prd/Shift/Mc : {date_str}/I/{TIMBANGAN_LINE_NO}"
-TEXT 180,290,"0",0,7,7,"Kode Prod    : {code_production}"
+QRCODE 25,45,H,5,A,0,M2,S7,"{code}"
+TEXT 185,35,"0",0,8,8,"{code}"
+TEXT 185,68,"0",0,8,8,"Part Code"
+TEXT 285,68,"0",0,8,8,": {part_code}"
+TEXT 185,100,"0",0,8,8,"TYPE"
+TEXT 285,100,"0",0,8,8,": {batt_type}"
+TEXT 185,132,"0",0,8,8,"Qty / Berat"
+TEXT 285,132,"0",0,8,8,": {qty_weight_str}"
+TEXT 185,164,"0",0,8,8,"Prd/Shift/Mc"
+TEXT 285,164,"0",0,8,8,": {date_str}"
+TEXT 185,196,"0",0,8,8,"Waktu"
+TEXT 285,196,"0",0,8,8,": {time_str}"
+TEXT 185,228,"0",0,8,8,"Kode FNS"
+TEXT 285,228,"0",0,8,8,": {code_finishing}"
+{prod_tspl}
 PRINT 2
 """
         else:
             # Layout Besar 7.5x10 cm
             if TIMBANGAN_ORIENTATION == "landscape":
-                # Sesuai Gambar (Landscape Rotated 90)
                 tspl_command = f"""SIZE {TIMBANGAN_WIDTH} mm, {TIMBANGAN_HEIGHT} mm
 GAP {TIMBANGAN_GAP} mm, 0 mm
 DIRECTION 1
@@ -1218,16 +1563,17 @@ CLS
 TEXT 540,40,"3",90,1,1,"PT. YUASA BATTERY INDONESIA"
 BAR 510,40,4,720
 QRCODE 360,40,M,6,A,90,"{code}"
-TEXT 440,300,"2",90,1,2,"{code}"
+TEXT 440,300,"2",90,1,1,"Code       : {code}"
 TEXT 400,300,"2",90,1,1,"Part Code  : {part_code}"
 TEXT 360,300,"2",90,1,1,"TYPE       : {batt_type}"
-TEXT 320,300,"2",90,1,1,"Quantity   : {quantity} Pcs  BERAT : {weight} KG"
-TEXT 280,300,"2",90,1,1,"Prd/Shift/Mc: {date_str}/I/{TIMBANGAN_LINE_NO}"
-TEXT 240,300,"2",90,1,1,"Kode Prod   : {code_production}"
+TEXT 320,300,"2",90,1,1,"Qty / Berat: {qty_weight_str}"
+TEXT 280,300,"2",90,1,1,"Prd/Shift/Mc: {date_str}"
+TEXT 240,300,"2",90,1,1,"Waktu      : {time_str}"
+TEXT 200,300,"2",90,1,1,"Kode Prod  : {code_production}"
+TEXT 160,300,"2",90,1,1,"Kode FNS   : {code_finishing}"
 PRINT 2
 """
             else:
-                # Portrait
                 tspl_command = f"""SIZE {TIMBANGAN_WIDTH} mm, {TIMBANGAN_HEIGHT} mm
 GAP {TIMBANGAN_GAP} mm, 0 mm
 DIRECTION 1
@@ -1235,15 +1581,17 @@ CLS
 TEXT 40,20,"3",0,1,1,"PT. YUASA BATTERY INDONESIA"
 BAR 40,56,{w_dots - 80},4
 QRCODE 40,90,M,6,A,0,"{code}"
-TEXT 280,90,"2",0,1,2,"{code}"
+TEXT 280,90,"2",0,1,1,"Code       : {code}"
 TEXT 280,130,"2",0,1,1,"Part Code  : {part_code}"
 TEXT 280,170,"2",0,1,1,"TYPE       : {batt_type}"
-TEXT 280,210,"2",0,1,1,"Quantity   : {quantity} Pcs  BERAT : {weight} KG"
-TEXT 280,250,"2",0,1,1,"Prd/Shift/Mc: {date_str}/I/{TIMBANGAN_LINE_NO}"
-TEXT 280,290,"2",0,1,1,"Kode Prod   : {code_production}"
+TEXT 280,210,"2",0,1,1,"Qty / Berat: {qty_weight_str}"
+TEXT 280,250,"2",0,1,1,"Prd/Shift/Mc: {date_str}"
+TEXT 280,290,"2",0,1,1,"Waktu      : {time_str}"
+TEXT 280,330,"2",0,1,1,"Kode Prod  : {code_production}"
+TEXT 280,370,"2",0,1,1,"Kode FNS   : {code_finishing}"
 PRINT 2
 """
-        logging.info(f"[MASTERBOX] Mengirim raw data Master Box ke {PRINTER_NAME}...")
+        logging.info(f"[MASTERBOX] Mengirim raw data ke printer...")
         try:
             hPrinter = win32print.OpenPrinter(PRINTER_NAME)
             try:
@@ -1263,15 +1611,20 @@ PRINT 2
             self.after(0, self.add_history, f"MASTERBOX ERROR -> Gagal cetak stiker Master Box.")
 
     def send_masterbox_api_and_print(self, payload, file_path):
-        """Kirim data timbangan ke API Masterbox, lalu trigger print label otomatis"""
-        file_name = os.path.basename(file_path)
-        logging.info(f"[MASTERBOX] Mengirim data ke API Master Box: {payload}")
-        
+        """Mengirim data hasil penimbangan ke API Master Box lalu mencetak stiker secara otomatis"""
+        if not PRINTER_ENABLE:
+            return
+            
         url = TIMBANGAN_API_URL
-        headers = {'Content-Type': 'application/json'}
-        success = False
+        file_name = os.path.basename(file_path)
         
+        logging.info(f"[MASTERBOX] Mengirim POST request untuk Master Box Line {TIMBANGAN_LINE_NO} ke {url}")
+        
+        success = False
         try:
+            start_time = time.time()
+            headers = {'Content-Type': 'application/json'}
+            
             # Bersihkan part_code dari null bytes dan suffix tipe data sebelum kirim
             if 'part_code' in payload:
                 import re
@@ -1279,42 +1632,67 @@ PRINT 2
                 clean_pc = re.sub(r'\s*\([A-Z_]+\)\s*$', '', clean_pc).strip()
                 payload['part_code'] = clean_pc
             
-            response = requests.post(url, json=payload, headers=headers, timeout=15)
+            response = requests.post(url, json=payload, headers=headers, timeout=15, verify=False)
             if response.status_code in [200, 201]:
                 res_data = response.json()
                 data = res_data.get("data", {})
+                metadata = data.get("metaData", {})
                 code = data.get("code", "MOCK.MB.CODE.ERROR")
                 
-                metadata = data.get("metaData", {})
-                raw_part_code = metadata.get("part_code", payload.get("part_code", "-"))
-                parts = [p.strip() for p in raw_part_code.split(" ") if p.strip()]
-                if len(parts) >= 2:
-                    part_code = parts[0]
-                    batt_type = " ".join(parts[1:])
-                else:
-                    part_code = raw_part_code
-                    batt_type = "-"
-                
-                # Parsing tanggal
-                created_at_raw = data.get("createdAt", "")
+                # 1. Part Code & TYPE (TYPE wajib dari metadata.part_code)
+                part_code = res_data.get("partCode") or data.get("partCode") or res_data.get("part_code") or "-"
+                batt_type = metadata.get("part_code") or payload.get("part_code") or res_data.get("partName") or "-"
+
+                # 2. Prod/Shift/Mc & Waktu (Waktu dari createdAt)
+                created_at_raw = res_data.get("createdAt") or data.get("createdAt") or metadata.get("timestamp") or ""
                 try:
-                    dt_part = created_at_raw.split(".")[0]
-                    dt = datetime.strptime(dt_part, "%Y-%m-%dT%H:%M:%S")
+                    if "T" in created_at_raw:
+                        dt_part = created_at_raw.split(".")[0]
+                        dt = datetime.strptime(dt_part, "%Y-%m-%dT%H:%M:%S")
+                    else:
+                        dt = datetime.strptime(created_at_raw.split(".")[0], "%Y-%m-%d %H:%M:%S")
                     date_str = dt.strftime("%d-%b-%Y")
+                    time_str = dt.strftime("%H:%M:%S")
                 except:
                     date_str = datetime.now().strftime("%d-%b-%Y")
+                    time_str = datetime.now().strftime("%H:%M:%S")
+                    
+                prod_shift_mc = res_data.get("prodShiftMc") or data.get("prodShiftMc") or f"{date_str}/I/{TIMBANGAN_LINE_NO}"
                 
+                # 3. Production Code & Finishing Code & Production Qty
                 code_production = (
-                    data.get("codeProduction") or 
-                    data.get("code_production") or 
                     res_data.get("codeProduction") or 
                     res_data.get("code_production") or 
+                    data.get("codeProduction") or 
+                    data.get("code_production") or 
                     metadata.get("codeProduction") or 
                     metadata.get("code_production") or 
                     "-"
                 )
+                code_production_qty = (
+                    res_data.get("codeProductionQuantity") or 
+                    res_data.get("code_production_quantity") or 
+                    data.get("codeProductionQuantity") or 
+                    data.get("code_production_quantity") or 
+                    metadata.get("codeProductionQuantity") or 
+                    metadata.get("code_production_quantity") or 
+                    ""
+                )
+
+                code_finishing = (
+                    res_data.get("codeFinishing") or 
+                    res_data.get("code_finishing") or 
+                    data.get("codeFinishing") or 
+                    data.get("code_finishing") or 
+                    metadata.get("codeFinishing") or 
+                    metadata.get("code_finishing") or 
+                    "-"
+                )
                 
-                logging.info(f"[MASTERBOX] API Sukses ({response.status_code}). Code: {code}, CodeProd: {code_production}")
+                weight = res_data.get("quantityWeight") or metadata.get("weight") or payload.get("weight", "0.0")
+                quantity = res_data.get("quantityPcs") or metadata.get("quantity") or payload.get("quantity", "0")
+                
+                logging.info(f"[MASTERBOX] API Sukses ({response.status_code}). Code: {code}, PartCode: {part_code}, Type: {batt_type}, CodeProd: {code_production}, CodeFNS: {code_finishing}")
                 self.after(0, self.add_history, f"MASTERBOX API -> Sukses. QR: {code}")
                 
                 # Auto-print Masterbox
@@ -1322,10 +1700,13 @@ PRINT 2
                     code=code,
                     part_code=part_code,
                     batt_type=batt_type,
-                    weight=payload.get("weight", "0.0"),
-                    quantity=payload.get("quantity", "0"),
-                    date_str=date_str,
-                    code_production=code_production
+                    weight=weight,
+                    quantity=quantity,
+                    date_str=prod_shift_mc,
+                    time_str=time_str,
+                    code_production=code_production,
+                    code_finishing=code_finishing,
+                    code_production_qty=code_production_qty
                 )
                 success = True
             else:
@@ -1357,46 +1738,60 @@ PRINT 2
         logging.info(f"[MASTERBOX] Mengirim POST request reprint ke {TIMBANGAN_RETRY_API_URL}")
         try:
             start_time = time.time()
-            response = requests.post(TIMBANGAN_RETRY_API_URL, json=payload, timeout=8)
+            response = requests.post(TIMBANGAN_RETRY_API_URL, json=payload, timeout=8, verify=False)
             duration = time.time() - start_time
             
             if response.status_code == 200:
                 res_data = response.json()
                 data = res_data.get("data", {})
+                metadata = data.get("metaData", {})
                 code = data.get("code", "MOCK.MB.CODE.ERROR")
                 
-                metadata = data.get("metaData", {})
-                raw_part_code = metadata.get("part_code", "-")
-                parts = [p.strip() for p in raw_part_code.split(" ") if p.strip()]
-                if len(parts) >= 2:
-                    part_code = parts[0]
-                    batt_type = " ".join(parts[1:])
-                else:
-                    part_code = raw_part_code
-                    batt_type = "-"
-                
-                # Parsing tanggal
-                created_at_raw = data.get("createdAt", "")
+                # 1. Part Code & TYPE (TYPE wajib dari metadata.part_code)
+                part_code = res_data.get("partCode") or data.get("partCode") or res_data.get("part_code") or "-"
+                batt_type = metadata.get("part_code") or payload.get("part_code") or res_data.get("partName") or "-"
+
+                # 2. Prod/Shift/Mc & Waktu (Waktu dari createdAt)
+                created_at_raw = res_data.get("createdAt") or data.get("createdAt") or metadata.get("timestamp") or ""
                 try:
-                    dt_part = created_at_raw.split(".")[0]
-                    dt = datetime.strptime(dt_part, "%Y-%m-%dT%H:%M:%S")
+                    if "T" in created_at_raw:
+                        dt_part = created_at_raw.split(".")[0]
+                        dt = datetime.strptime(dt_part, "%Y-%m-%dT%H:%M:%S")
+                    else:
+                        dt = datetime.strptime(created_at_raw.split(".")[0], "%Y-%m-%d %H:%M:%S")
                     date_str = dt.strftime("%d-%b-%Y")
+                    time_str = dt.strftime("%H:%M:%S")
                 except:
                     date_str = datetime.now().strftime("%d-%b-%Y")
+                    time_str = datetime.now().strftime("%H:%M:%S")
+                    
+                prod_shift_mc = res_data.get("prodShiftMc") or data.get("prodShiftMc") or f"{date_str}/I/{TIMBANGAN_LINE_NO}"
                 
-                weight = metadata.get("weight", "0.0")
-                quantity = metadata.get("quantity", "0")
+                # 3. Production Code & Finishing Code
                 code_production = (
-                    data.get("codeProduction") or 
-                    data.get("code_production") or 
                     res_data.get("codeProduction") or 
                     res_data.get("code_production") or 
+                    data.get("codeProduction") or 
+                    data.get("code_production") or 
                     metadata.get("codeProduction") or 
                     metadata.get("code_production") or 
                     "-"
                 )
+
+                code_finishing = (
+                    res_data.get("codeFinishing") or 
+                    res_data.get("code_finishing") or 
+                    data.get("codeFinishing") or 
+                    data.get("code_finishing") or 
+                    metadata.get("codeFinishing") or 
+                    metadata.get("code_finishing") or 
+                    "-"
+                )
                 
-                logging.info(f"[MASTERBOX] API Reprint Sukses ({response.status_code}) dalam {duration:.2f}s. Code: {code}, CodeProd: {code_production}")
+                weight = res_data.get("quantityWeight") or metadata.get("weight", "0.0")
+                quantity = res_data.get("quantityPcs") or metadata.get("quantity", "0")
+                
+                logging.info(f"[MASTERBOX] API Reprint Sukses ({response.status_code}) dalam {duration:.2f}s. Code: {code}, PartCode: {part_code}, Type: {batt_type}, CodeProd: {code_production}, CodeFNS: {code_finishing}")
                 self.after(0, self.add_history, f"MASTERBOX REPRINT -> Sukses. QR: {code}")
                 
                 # Print Masterbox
@@ -1406,8 +1801,10 @@ PRINT 2
                     batt_type=batt_type,
                     weight=weight,
                     quantity=quantity,
-                    date_str=date_str,
-                    code_production=code_production
+                    date_str=prod_shift_mc,
+                    time_str=time_str,
+                    code_production=code_production,
+                    code_finishing=code_finishing
                 )
                 self.after(2000, lambda: self.reset_printer_visual_state())
             else:
@@ -1496,8 +1893,9 @@ PRINT 2
                         )
                         t.start()
                     else:
-                        logging.error(f"[MASTERBOX] Format file log {file_name} tidak valid.")
-                        dest = os.path.join(LOG_DIR_TIMBANGAN, "error", os.path.basename(file_path))
+                        file_bname = os.path.basename(file_path)
+                        logging.error(f"[MASTERBOX] Format file log {file_bname} tidak valid.")
+                        dest = os.path.join(LOG_DIR_TIMBANGAN, "error", file_bname)
                         shutil.move(file_path, dest)
                         
                 except Exception as e:
@@ -1536,6 +1934,7 @@ PRINT 2
             button_press_start_time = 0
             reprint_triggered = False
             press_count = 0
+            last_release_time = 0.0
             button_released_pending = False
             
             while self.running:
@@ -1551,7 +1950,7 @@ PRINT 2
                         reprint_triggered = False
                         logging.info(f"[PRINTER] Tombol cetak mulai ditekan pada {PRINTER_MONITOR_ADDR} (Rockwell)")
                         
-                    # Long Press
+                    # Long Press (Hold 5s -> Reprint Pallet)
                     if current_button_state and is_pressing_button:
                         press_duration = time.time() - button_press_start_time
                         if press_duration >= 5.0 and not reprint_triggered:
@@ -1567,23 +1966,62 @@ PRINT 2
                     if not current_button_state and last_button_state:
                         if is_pressing_button:
                             press_duration = time.time() - button_press_start_time
-                            if press_duration < 3.0 and not reprint_triggered:
+                            if press_duration < 5.0 and not reprint_triggered:
                                 press_count += 1
+                                last_release_time = time.time()
                                 button_released_pending = True
+                                logging.info(f"[PRINTER] Tombol (Rockwell) dilepas singkat. press_count={press_count}")
                             is_pressing_button = False
+                            reprint_triggered = False
                             
-                    # Pending press logic
-                    if button_released_pending and not is_pressing_button:
-                        if time.time() - button_press_start_time >= 3.0:
-                            if press_count == 1:
-                                display_msg = f"PLC -> Tombol ({PRINTER_MONITOR_ADDR}) ditekan 1x. Memicu CETAK BARU."
-                                logging.info(f"[PRINTER] {display_msg}")
-                                self.after(0, self.add_history, display_msg)
-                                threading.Thread(target=self.hit_api_pallet_and_print, args=(False,), daemon=True).start()
+                    # Process click buffer (Single click -> Print Pallet, Double click -> Reprint Masterbox)
+                    if button_released_pending:
+                        elapsed = time.time() - last_release_time
+                        if press_count >= 2:
+                            display_msg = f"PLC -> Tombol ({PRINTER_MONITOR_ADDR}) ditekan 2 kali! Memicu REPRINT Master Box."
+                            logging.info(f"[PRINTER] {display_msg}")
+                            self.after(0, self.add_history, display_msg)
+                            
+                            mb_reprint_thread = threading.Thread(target=self.reprint_masterbox, daemon=True)
+                            mb_reprint_thread.start()
+                            
+                            press_count = 0
+                            button_released_pending = False
+                        elif elapsed >= 0.45 and not is_pressing_button:
+                            display_msg = f"PLC -> Tombol ({PRINTER_MONITOR_ADDR}) ditekan 1 kali. Memicu CETAK normal Pallet."
+                            logging.info(f"[PRINTER] {display_msg}")
+                            self.after(0, self.add_history, display_msg)
+                            
+                            print_thread = threading.Thread(target=self.hit_api_pallet_and_print, args=(False,), daemon=True)
+                            print_thread.start()
+                            
                             press_count = 0
                             button_released_pending = False
                             
                     last_button_state = current_button_state
+                    
+                    # Monitor Remove From Masterbox button (Rockwell)
+                    if SCANNER_REMOVE_ADDR:
+                        try:
+                            res_rm = plc.read(SCANNER_REMOVE_ADDR)
+                            if res_rm and res_rm.value is not None:
+                                new_remove = bool(res_rm.value)
+                                if new_remove != self.remove_mode:
+                                    self.remove_mode = new_remove
+                                    logging.info(f"[SCANNER] Remove button ({SCANNER_REMOVE_ADDR}) = {res_rm.value} -> remove_mode={self.remove_mode}")
+                        except Exception:
+                            pass
+                    # Monitor Remove button Scanner 2
+                    if SCANNER2_REMOVE_ADDR:
+                        try:
+                            res_rm2 = plc.read(SCANNER2_REMOVE_ADDR)
+                            if res_rm2 and res_rm2.value is not None:
+                                new_remove2 = bool(res_rm2.value)
+                                if new_remove2 != self.remove_mode2:
+                                    self.remove_mode2 = new_remove2
+                                    logging.info(f"[SCANNER2] Remove button ({SCANNER2_REMOVE_ADDR}) = {res_rm2.value} -> remove_mode2={self.remove_mode2}")
+                        except Exception:
+                            pass
                 time.sleep(0.1)
                 
         except Exception as e:
@@ -1612,6 +2050,97 @@ PRINT 2
                         raise RuntimeError("pywinauto missing")
                     app = Application(backend="win32").connect(title_re=".*CX-Programmer.*")
                     main_window = app.window(title_re=".*CX-Programmer.*")
+                    
+                    # =====================================================================
+                    # AUTO WORK ONLINE: Klik menu PLC -> Work Online jika belum online
+                    # =====================================================================
+                    try:
+                        self.after(0, self.add_history, "PLC: Mengecek status koneksi CX-Programmer...")
+                        logging.info("[PLC] Mencoba Auto Work Online via menu PLC...")
+                        main_window.set_focus()
+                        time.sleep(0.5)
+                        
+                        # Cek apakah sudah online dengan melihat title window
+                        win_title = main_window.window_text()
+                        is_already_online = "(Online)" in win_title or "Online" in win_title
+                        
+                        if not is_already_online:
+                            logging.info("[PLC] CX-Programmer masih Offline, mencoba Work Online...")
+                            self.after(0, self.add_history, "PLC: Auto Work Online sedang dijalankan...")
+                            try:
+                                # Coba via menu PLC -> Work Online
+                                main_window.menu_select("PLC->Work Online")
+                                time.sleep(3)
+                                logging.info("[PLC] Menu 'Work Online' berhasil diklik.")
+                            except Exception as e_menu:
+                                logging.warning(f"[PLC] Gagal klik menu Work Online: {e_menu}, mencoba cara lain...")
+                                try:
+                                    # Fallback: keyboard shortcut Ctrl+W (shortcut Work Online di beberapa versi)
+                                    main_window.set_focus()
+                                    import pywinauto.keyboard as kb
+                                    kb.send_keys("^w")
+                                    time.sleep(3)
+                                except Exception as e_kb:
+                                    logging.warning(f"[PLC] Keyboard shortcut juga gagal: {e_kb}")
+                            
+                            # Tunggu dialog konfirmasi "Work Online?" jika muncul, klik Yes
+                            try:
+                                dialog = app.window(title_re=".*(Work Online|Confirm|Konfirmasi).*")
+                                dialog.wait("exists", timeout=3)
+                                # Klik tombol Yes/OK
+                                for btn_title in ["Yes", "OK", "&Yes", "&OK"]:
+                                    try:
+                                        dialog.child_window(title=btn_title, control_type="Button").click()
+                                        logging.info(f"[PLC] Dialog Work Online dikonfirmasi dengan '{btn_title}'")
+                                        break
+                                    except:
+                                        continue
+                                time.sleep(3)
+                            except Exception:
+                                pass  # Tidak ada dialog, lanjut
+                                
+                            logging.info("[PLC] Proses Work Online selesai. Menunggu koneksi stabil...")
+                            time.sleep(2)
+                        else:
+                            logging.info("[PLC] CX-Programmer sudah Online, skip Work Online.")
+                            self.after(0, self.add_history, "PLC: CX-Programmer sudah Online.")
+                            
+                    except Exception as e_online:
+                        logging.warning(f"[PLC] Auto Work Online error (diabaikan): {e_online}")
+                    
+                    # =====================================================================
+                    # SAFETY NET WATCH WINDOW: Buka Watch Window jika belum terbuka
+                    # =====================================================================
+                    try:
+                        watch_window_check = main_window.child_window(title="Watch Window", class_name="AfxWnd42")
+                        watch_window_check.wait("exists visible", timeout=3)
+                        logging.info("[PLC] Watch Window sudah terbuka.")
+                    except Exception:
+                        logging.info("[PLC] Watch Window belum terbuka, mencoba buka via menu View...")
+                        self.after(0, self.add_history, "PLC: Membuka Watch Window otomatis...")
+                        try:
+                            main_window.set_focus()
+                            # Coba via menu View -> Windows -> Watch -> Watch 1
+                            try:
+                                main_window.menu_select("View->Windows->Watch->Watch 1")
+                                logging.info("[PLC] Watch Window dibuka via menu View->Windows->Watch->Watch 1")
+                            except Exception:
+                                try:
+                                    main_window.menu_select("View->Watch Window")
+                                    logging.info("[PLC] Watch Window dibuka via menu View->Watch Window")
+                                except Exception:
+                                    try:
+                                        # Keyboard shortcut Alt+3 (Watch Window di beberapa versi CX-Programmer)
+                                        import pywinauto.keyboard as kb
+                                        kb.send_keys("%3")
+                                        logging.info("[PLC] Watch Window dibuka via keyboard Alt+3")
+                                    except Exception as e_ww:
+                                        logging.warning(f"[PLC] Gagal buka Watch Window otomatis: {e_ww}")
+                            time.sleep(2)
+                        except Exception as e_ww2:
+                            logging.warning(f"[PLC] Safety net Watch Window error: {e_ww2}")
+                    
+                    # Ambil referensi final Watch Window dan ListView
                     watch_window = main_window.child_window(title="Watch Window", class_name="AfxWnd42")
                     list_view = watch_window.child_window(class_name="SysListView32", found_index=0)
                     
@@ -1633,18 +2162,26 @@ PRINT 2
                     button_released_pending = False
                     tick_counter = 0
                     target_button_row = -1
+                    target_remove_row = -1  # Row index untuk tombol Remove From Masterbox
                     
                     while self.running:
                         # Scan list_view item row mapping
-                        if tick_counter % 15 == 0 or target_button_row == -1:
+                        if tick_counter % 15 == 0 or target_button_row == -1 or target_remove_row == -1:
                             try:
                                 item_count = list_view.item_count()
                                 target_button_row = -1
+                                target_remove_row = -1
+                                all_addresses = []
                                 for row in range(item_count):
                                     address = list_view.get_item(row, 2).text().strip()
+                                    all_addresses.append(f"row{row}=[{repr(address)}]")
                                     if address == PRINTER_MONITOR_ADDR:
                                         target_button_row = row
-                                        break
+                                    if SCANNER_REMOVE_ADDR and address == SCANNER_REMOVE_ADDR:
+                                        target_remove_row = row
+                                # Debug: log semua address yang ditemukan jika remove row belum ketemu
+                                if SCANNER_REMOVE_ADDR and target_remove_row == -1 and tick_counter < 30:
+                                    logging.info(f"[SCANNER] DEBUG - Mencari '{SCANNER_REMOVE_ADDR}' di Watch Window. Semua address: {', '.join(all_addresses)}")
                             except Exception:
                                 break
                                 
@@ -1754,6 +2291,17 @@ PRINT 2
                             except Exception:
                                 break
                                 
+                        # Detect Remove From Masterbox Button (CX-Programmer)
+                        if SCANNER_REMOVE_ADDR and target_remove_row != -1:
+                            try:
+                                remove_val = list_view.get_item(target_remove_row, 5).text().strip()
+                                new_remove_mode = (remove_val == "1")
+                                if new_remove_mode != self.remove_mode:
+                                    self.remove_mode = new_remove_mode
+                                    logging.info(f"[SCANNER] Remove button ({SCANNER_REMOVE_ADDR}) = {remove_val} -> remove_mode={self.remove_mode}")
+                            except Exception as e_rm:
+                                logging.error(f"[SCANNER] Error reading remove button: {e_rm}")
+
                         tick_counter += 1
                         time.sleep(0.04)
                 except Exception as e:
@@ -1932,8 +2480,14 @@ PRINT 2
                     self.after(0, self.add_history, f"Timbangan: Terhubung ke PLC Rockwell {TIMBANGAN_PLC_IP}.")
                     
                     last_box = None
+                    last_sensor_state = False
+                    pending_boxes = 0  # Jumlah box valid (Timbangan HIJAU / Totalizer bertambah)
                     local_counter = 0
+                    
+                    # Bangun daftar tags yang dibaca dari Rockwell
                     tags = [TIMBANGAN_TAG_WEIGHT, TIMBANGAN_TAG_QTY, TIMBANGAN_TAG_TYPE, TIMBANGAN_TAG_TOTALIZER]
+                    if TIMBANGAN_TAG_SENSOR:
+                        tags.append(TIMBANGAN_TAG_SENSOR)
                     
                     while self.running:
                         results = plc.read(*tags)
@@ -1946,14 +2500,55 @@ PRINT 2
                                 current_values[k] = v.replace('\x00', '').strip()
                         
                         current_box = current_values.get(TIMBANGAN_TAG_TOTALIZER)
-                        if current_box is None: raise RuntimeError("Totalizer not found")
+                        raw_weight = current_values.get(TIMBANGAN_TAG_WEIGHT, 0.0)
+                        try:
+                            weight_val = float(raw_weight)
+                        except:
+                            weight_val = 0.0
+                            
+                        # 1. Pantau Perubahan Totalizer (Timbangan HIJAU / OK)
+                        if current_box is not None and last_box is not None and current_box != last_box:
+                            pending_boxes += 1
+                            logging.info(f"[TIMBANGAN] Timbangan HIJAU! Totalizer bertambah ({last_box} -> {current_box}). Pending Box Siap Cetak = {pending_boxes}")
+                        last_box = current_box
+
+                        # 2. Evaluasi Trigger berdasarkan TRIGGER_MODE (auto, sensor, totalizer)
+                        triggered = False
+                        mode = TIMBANGAN_TRIGGER_MODE.lower()
                         
-                        if last_box is not None and current_box == last_box:
-                            time.sleep(0.25)
+                        # Pantau SENSOR kardus lewat (_IO_EM_DI_00)
+                        if TIMBANGAN_TAG_SENSOR:
+                            raw_sensor = current_values.get(TIMBANGAN_TAG_SENSOR)
+                            current_sensor_state = bool(raw_sensor) if raw_sensor is not None else False
+                            
+                            # Sinyal Sensor Naik (0 -> 1)
+                            if current_sensor_state and not last_sensor_state:
+                                if mode in ["auto", "sensor"]:
+                                    # SAFETY GUARD: Wajib ada Totalizer Baru ATAU Berat > 0.1 KG
+                                    if pending_boxes > 0 or weight_val > 0.1:
+                                        triggered = True
+                                        if pending_boxes > 0:
+                                            pending_boxes -= 1
+                                        logging.info(f"[TIMBANGAN] [TRIGGER VALID] Sensor sealer mendeteksi kardus lewat ({TIMBANGAN_TAG_SENSOR}) & Timbangan HIJAU/Valid ({weight_val} KG)! Eksekusi print...")
+                                    else:
+                                        display_warn = f"Timbangan: Sensor tersenggol ({TIMBANGAN_TAG_SENSOR}) TAPI timbangan belum HIJAU (Berat {weight_val} KG)! Print DIBATALKAN."
+                                        logging.warning(f"[TIMBANGAN] {display_warn}")
+                                        self.after(0, self.add_history, display_warn)
+                                        
+                            last_sensor_state = current_sensor_state
+                        
+                        # Trigger Mode Totalizer Murni (tanpa sensor sealer)
+                        if not triggered and mode == "totalizer":
+                            if pending_boxes > 0 and weight_val > 0.1:
+                                triggered = True
+                                pending_boxes -= 1
+                                logging.info(f"[TIMBANGAN] [TRIGGER: TOTALIZER] Totalizer box bertambah & Berat Valid ({weight_val} KG)")
+                            
+                        if not triggered:
+                            time.sleep(0.15)
                             continue
                             
                         local_counter += 1
-                        last_box = current_box
                         
                         now = datetime.now()
                         time_full = now.strftime("%d%m%Y %H:%M:%S")
@@ -2090,5 +2685,16 @@ PRINT 2
         self.destroy()
 
 if __name__ == "__main__":
+    # Prevent multiple instances from running simultaneously
+    lock_socket = None
+    try:
+        lock_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        lock_socket.bind(('127.0.0.1', 65432))
+    except Exception:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showwarning("Aplikasi Sudah Berjalan", "Aplikasi Yuasa Scanner sudah aktif di background / taskbar!\nTidak dapat membuka dua aplikasi secara bersamaan.")
+        sys.exit(0)
+
     app = ScannerApp()
     app.mainloop()
