@@ -13,14 +13,15 @@ set BAT_DEST=%STARTUP_FOLDER%\Startup_POS_QC2.bat
 
 echo Membuat dan menyalin launcher ke folder Windows Startup...
 
-REM Tulis file BAT launcher langsung ke folder Startup (Mendukung versi folder instan & single file)
+REM Tulis file BAT launcher langsung ke folder Startup
 (
     echo @echo off
     echo title Yuasa POS QC 2 - Auto Startup
-    echo if exist "D:\PLC\Yuasa_Scanner_App_Folder\Yuasa_Scanner_App.exe" ^(
-    echo     start "" "D:\PLC\Yuasa_Scanner_App_Folder\Yuasa_Scanner_App.exe"
-    echo ^) else ^(
+    echo if exist "D:\PLC\Yuasa_Scanner_App.exe" ^(
     echo     start "" "D:\PLC\Yuasa_Scanner_App.exe"
+    echo ^) else ^(
+    echo     echo [ERROR] Yuasa_Scanner_App.exe tidak ditemukan di D:\PLC\
+    echo     pause
     echo ^)
     echo exit
 ) > "%BAT_DEST%"
@@ -34,16 +35,17 @@ if exist "%BAT_DEST%" (
     echo   %BAT_DEST%
     echo.
     echo   Mulai sekarang, setiap kali PC dinyalakan:
-    echo    -> Yuasa Scanner App akan terbuka otomatis (Versi Instan)
+    echo    -> Yuasa Scanner App akan terbuka otomatis
     echo    -> Koneksi Allen Bradley PLC via LAN otomatis
     echo    -> Tidak perlu klik apapun!
     echo ============================================
+    timeout /t 3 /nobreak > nul
 ) else (
     echo.
     echo [ERROR] Gagal membuat launcher. Coba jalankan
     echo         file ini sebagai Administrator.
     echo         (Klik kanan -> Run as Administrator)
+    pause
 )
 
-echo.
-pause
+exit

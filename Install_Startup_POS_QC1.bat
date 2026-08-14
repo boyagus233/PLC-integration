@@ -42,12 +42,13 @@ if exist "%BAT_DEST%" (
     echo    -> Yuasa Scanner App akan terbuka otomatis
     echo    -> Tidak perlu klik apapun!
     echo ============================================
+    timeout /t 3 /nobreak > nul
 ) else (
     echo.
     echo [ERROR] Gagal menyalin file. Coba jalankan
     echo         file ini sebagai Administrator.
     echo         (Klik kanan -> Run as Administrator)
+    pause
 )
 
-echo.
-pause
+exit
