@@ -2323,7 +2323,8 @@ PRINT 2
                 self.after(0, self.add_history, f"PLC: Mencoba terhubung via {DOWNTIME_CONN_MODE}...")
                 
                 # Coba baca 1 register untuk test koneksi
-                test_val = self.get_omron_address_value(DOWNTIME_CONN_MODE, DOWNTIME_PLC_IP, DOWNTIME_PLC_PORT, DOWNTIME_PLC_BAUD, PRINTER_MONITOR_ADDR)
+                test_addr = DOWNTIME_ADDRESSES[0]["address"] if DOWNTIME_ADDRESSES else "0.00"
+                test_val = self.get_omron_address_value(DOWNTIME_CONN_MODE, DOWNTIME_PLC_IP, DOWNTIME_PLC_PORT, DOWNTIME_PLC_BAUD, test_addr)
                 if test_val is None:
                     # Gagal koneksi
                     if DOWNTIME_ENABLE:
