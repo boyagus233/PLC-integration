@@ -415,6 +415,9 @@ def load_config():
     tb_tag_type = config.get("TIMBANGAN_CONFIG", "TAG_TYPE", fallback="Product_Type").strip()
     tb_tag_totalizer = config.get("TIMBANGAN_CONFIG", "TAG_TOTALIZER", fallback="Totalizer_Box").strip()
     tb_tag_sensor = config.get("TIMBANGAN_CONFIG", "TAG_SENSOR", fallback="_IO_EM_DI_00").strip()
+    tb_tag_code_prod1 = config.get("TIMBANGAN_CONFIG", "TAG_CODE_PROD1", fallback="Product_Code1").strip()
+    tb_tag_code_prod2 = config.get("TIMBANGAN_CONFIG", "TAG_CODE_PROD2", fallback="Product_Code2").strip()
+    tb_tag_code_fns = config.get("TIMBANGAN_CONFIG", "TAG_CODE_FNS", fallback="Product_Finishing").strip()
     
     # Parse List Alamat Downtime
     dt_addresses = []
@@ -446,7 +449,7 @@ def load_config():
             pr_enable, pr_name, pr_url, pr_retry_url, pr_monitor_addr, pr_api_line, pr_label_line,
             pr_conn_mode, pr_plc_ip, pr_width, pr_height, pr_gap, pr_orientation,
             tb_enable, tb_line, tb_url, tb_retry_url, tb_width, tb_height, tb_gap, tb_orientation,
-            tb_conn_mode, tb_plc_ip, tb_plc_port, tb_plc_baud, tb_trigger_mode, tb_tag_weight, tb_tag_qty, tb_tag_type, tb_tag_totalizer, tb_tag_sensor)
+            tb_conn_mode, tb_plc_ip, tb_plc_port, tb_plc_baud, tb_trigger_mode, tb_tag_weight, tb_tag_qty, tb_tag_type, tb_tag_totalizer, tb_tag_sensor, tb_tag_code_prod1, tb_tag_code_prod2, tb_tag_code_fns)
 
 (SCANNER_ENABLE, LINE_NO, PORT_SCANNER, BAUD_RATE, API_URL, SCANNER_REMOVE_API_URL, SCANNER_REMOVE_ADDR,
  SCANNER2_ENABLE, LINE_NO2, PORT_SCANNER2, BAUD_RATE2, API_URL2, SCANNER2_REMOVE_API_URL, SCANNER2_REMOVE_ADDR,
@@ -456,7 +459,7 @@ def load_config():
  TIMBANGAN_ENABLE, TIMBANGAN_LINE_NO, TIMBANGAN_API_URL, TIMBANGAN_RETRY_API_URL, 
  TIMBANGAN_WIDTH, TIMBANGAN_HEIGHT, TIMBANGAN_GAP, TIMBANGAN_ORIENTATION,
  TIMBANGAN_CONN_MODE, TIMBANGAN_PLC_IP, TIMBANGAN_PLC_PORT, TIMBANGAN_PLC_BAUD, TIMBANGAN_TRIGGER_MODE,
- TIMBANGAN_TAG_WEIGHT, TIMBANGAN_TAG_QTY, TIMBANGAN_TAG_TYPE, TIMBANGAN_TAG_TOTALIZER, TIMBANGAN_TAG_SENSOR) = load_config()
+ TIMBANGAN_TAG_WEIGHT, TIMBANGAN_TAG_QTY, TIMBANGAN_TAG_TYPE, TIMBANGAN_TAG_TOTALIZER, TIMBANGAN_TAG_SENSOR, TIMBANGAN_TAG_CODE_PROD1, TIMBANGAN_TAG_CODE_PROD2, TIMBANGAN_TAG_CODE_FNS) = load_config()
 
 # Load http port configuration directly
 try:
@@ -1482,6 +1485,14 @@ PRINT 1
             logging.error("[MASTERBOX] Library win32print missing. Cetak fisik dibatalkan.")
             return
             
+        raw_prod_codes = [c.strip() for c in str(code_production).split(',') if c.strip()]
+        unique_prod_codes = list(dict.fromkeys(raw_prod_codes))
+        code_production = ", ".join(unique_prod_codes) if unique_prod_codes else "-"
+        
+        raw_fns_codes = [c.strip() for c in str(code_finishing).split(',') if c.strip()]
+        unique_fns_codes = list(dict.fromkeys(raw_fns_codes))
+        code_finishing = ", ".join(unique_fns_codes) if unique_fns_codes else "-"
+        
         w_dots = int(TIMBANGAN_WIDTH * 8)
         qty_weight_str = f"{quantity} Pcs / {weight} KG"
         
@@ -1513,12 +1524,9 @@ PRINT 2
 """
         elif TIMBANGAN_HEIGHT <= 65 or TIMBANGAN_WIDTH <= 80:
             # Parse multi-code production and quantities
-            prod_codes = [c.strip() for c in str(code_production).split(',') if c.strip()]
+            prod_codes = unique_prod_codes if unique_prod_codes else ["-"]
             prod_qtys = [q.strip() for q in str(code_production_qty).split(',') if q.strip()]
             
-            if not prod_codes:
-                prod_codes = ["-"]
-                
             formatted_prod_items = []
             for idx, c_item in enumerate(prod_codes):
                 q_item = prod_qtys[idx] if idx < len(prod_qtys) else (prod_qtys[0] if prod_qtys else "")
@@ -1669,6 +1677,9 @@ PRINT 2
                     metadata.get("code_production") or 
                     "-"
                 )
+                if isinstance(code_production, list):
+                    code_production = ','.join([str(c) for c in code_production])
+                    
                 code_production_qty = (
                     res_data.get("codeProductionQuantity") or 
                     res_data.get("code_production_quantity") or 
@@ -1688,6 +1699,8 @@ PRINT 2
                     metadata.get("code_finishing") or 
                     "-"
                 )
+                if isinstance(code_finishing, list):
+                    code_finishing = ','.join([str(c) for c in code_finishing])
                 
                 weight = res_data.get("quantityWeight") or metadata.get("weight") or payload.get("weight", "0.0")
                 quantity = res_data.get("quantityPcs") or metadata.get("quantity") or payload.get("quantity", "0")
@@ -1883,6 +1896,27 @@ PRINT 2
                                 payload['timestamp'] = f"{year}-{month}-{day} {time_part}"
                             except:
                                 payload['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        elif key == "Product_Code1":
+                            clean_val = val.replace('\x00', '').strip()
+                            import re
+                            clean_val = re.sub(r'\s*\([A-Z_]+\)\s*$', '', clean_val).strip()
+                            if clean_val and clean_val != "-":
+                                if "codeProduction" not in payload: payload["codeProduction"] = []
+                                payload["codeProduction"].append(clean_val)
+                        elif key == "Product_Code2":
+                            clean_val = val.replace('\x00', '').strip()
+                            import re
+                            clean_val = re.sub(r'\s*\([A-Z_]+\)\s*$', '', clean_val).strip()
+                            if clean_val and clean_val != "-":
+                                if "codeProduction" not in payload: payload["codeProduction"] = []
+                                payload["codeProduction"].append(clean_val)
+                        elif key == "Product_Finishing":
+                            clean_val = val.replace('\x00', '').strip()
+                            import re
+                            clean_val = re.sub(r'\s*\([A-Z_]+\)\s*$', '', clean_val).strip()
+                            if clean_val and clean_val != "-":
+                                if "codeFinishing" not in payload: payload["codeFinishing"] = []
+                                payload["codeFinishing"].append(clean_val)
                                 
                     if 'line_no' in payload and 'part_code' in payload and 'weight' in payload:
                         # Jalankan hit API & print di thread terpisah agar UI tidak hang
@@ -2489,6 +2523,12 @@ PRINT 2
                     tags = [TIMBANGAN_TAG_WEIGHT, TIMBANGAN_TAG_QTY, TIMBANGAN_TAG_TYPE, TIMBANGAN_TAG_TOTALIZER]
                     if TIMBANGAN_TAG_SENSOR:
                         tags.append(TIMBANGAN_TAG_SENSOR)
+                    if TIMBANGAN_TAG_CODE_PROD1:
+                        tags.append(TIMBANGAN_TAG_CODE_PROD1)
+                    if TIMBANGAN_TAG_CODE_PROD2:
+                        tags.append(TIMBANGAN_TAG_CODE_PROD2)
+                    if TIMBANGAN_TAG_CODE_FNS:
+                        tags.append(TIMBANGAN_TAG_CODE_FNS)
                     
                     while self.running:
                         results = plc.read(*tags)
@@ -2562,6 +2602,9 @@ PRINT 2
                             f"Recent_Weight: {current_values.get(TIMBANGAN_TAG_WEIGHT, 0.0)} (REAL)",
                             f"Recent_Qty: {current_values.get(TIMBANGAN_TAG_QTY, 0)} (DINT)",
                             f"Product_Type: {current_values.get(TIMBANGAN_TAG_TYPE, '-')} (STRING)",
+                            f"Product_Code1: {current_values.get(TIMBANGAN_TAG_CODE_PROD1, '-')} (STRING)",
+                            f"Product_Code2: {current_values.get(TIMBANGAN_TAG_CODE_PROD2, '-')} (STRING)",
+                            f"Product_Finishing: {current_values.get(TIMBANGAN_TAG_CODE_FNS, '-')} (STRING)",
                             f"Timestamp: {time_full}",
                             "----------------------------------------"
                         ]
@@ -2614,16 +2657,11 @@ PRINT 2
                         weight_str = self.get_omron_address_value(TIMBANGAN_CONN_MODE, TIMBANGAN_PLC_IP, TIMBANGAN_PLC_PORT, TIMBANGAN_PLC_BAUD, TIMBANGAN_TAG_WEIGHT)
                         qty_str = self.get_omron_address_value(TIMBANGAN_CONN_MODE, TIMBANGAN_PLC_IP, TIMBANGAN_PLC_PORT, TIMBANGAN_PLC_BAUD, TIMBANGAN_TAG_QTY)
                         
-                        # Membaca product type (biasanya string 20 char, dibaca 10 word)
-                        part_code = "-"
-                        area_type, word, bit = parse_omron_address(TIMBANGAN_TAG_TYPE)
-                        if area_type is not None:
-                            if TIMBANGAN_CONN_MODE == "serial":
-                                words = OmronPLCHelper.read_words_serial(TIMBANGAN_PLC_PORT, TIMBANGAN_PLC_BAUD, area_type, word, 10)
-                                if words: part_code = words_to_ascii(words)
-                            elif TIMBANGAN_CONN_MODE == "ethernet":
-                                words = OmronPLCHelper.read_words_fins_udp(TIMBANGAN_PLC_IP, 9600, area_type, word, 10)
-                                if words: part_code = words_to_ascii(words)
+                        # Membaca product type dan kode produksi/finishing
+                        part_code = self.get_omron_string_value(TIMBANGAN_CONN_MODE, TIMBANGAN_PLC_IP, TIMBANGAN_PLC_PORT, TIMBANGAN_PLC_BAUD, TIMBANGAN_TAG_TYPE, 10)
+                        code_prod1 = self.get_omron_string_value(TIMBANGAN_CONN_MODE, TIMBANGAN_PLC_IP, TIMBANGAN_PLC_PORT, TIMBANGAN_PLC_BAUD, TIMBANGAN_TAG_CODE_PROD1, 10)
+                        code_prod2 = self.get_omron_string_value(TIMBANGAN_CONN_MODE, TIMBANGAN_PLC_IP, TIMBANGAN_PLC_PORT, TIMBANGAN_PLC_BAUD, TIMBANGAN_TAG_CODE_PROD2, 10)
+                        code_fns = self.get_omron_string_value(TIMBANGAN_CONN_MODE, TIMBANGAN_PLC_IP, TIMBANGAN_PLC_PORT, TIMBANGAN_PLC_BAUD, TIMBANGAN_TAG_CODE_FNS, 10)
                         
                         # Parsing tipe data numerik
                         weight = float(weight_str) if weight_str else 0.0
@@ -2647,6 +2685,9 @@ PRINT 2
                             f"Recent_Weight: {weight} (REAL)",
                             f"Recent_Qty: {qty} (DINT)",
                             f"Product_Type: {part_code} (STRING)",
+                            f"Product_Code1: {code_prod1} (STRING)",
+                            f"Product_Code2: {code_prod2} (STRING)",
+                            f"Product_Finishing: {code_fns} (STRING)",
                             f"Timestamp: {time_full}",
                             "----------------------------------------"
                         ]
