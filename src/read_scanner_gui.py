@@ -950,6 +950,44 @@ class ScannerApp(tk.Tk):
         except Exception as e:
             logging.error(f"[SCANNER] Gagal memutar alarm suara scanner: {e}")
 
+    def trigger_scanner2_error_alert(self):
+        """Mengirim perintah SSI Host Command untuk BEEP Slow Warble dan LED Merah ke Scanner 2"""
+        try:
+            if hasattr(self, 'ser2') and self.ser2 and self.ser2.is_open:
+                # 1. Turn on Red LED (0x02)
+                self.ser2.write(b'\x00')
+                time.sleep(0.05)
+                packet_led = [0x05, 0xE7, 0x04, 0x00, 0x02]
+                chk_led = (~sum(packet_led) + 1) & 0xFFFF
+                packet_led.extend([(chk_led >> 8) & 0xFF, chk_led & 0xFF])
+                self.ser2.write(bytes(packet_led))
+                
+                # 2. Play Beep 22 / Slow Warble (0x15)
+                time.sleep(0.05)
+                self.ser2.write(b'\x00')
+                time.sleep(0.05)
+                packet_beep = [0x05, 0xE6, 0x04, 0x00, 0x15]
+                chk_beep = (~sum(packet_beep) + 1) & 0xFFFF
+                packet_beep.extend([(chk_beep >> 8) & 0xFF, chk_beep & 0xFF])
+                self.ser2.write(bytes(packet_beep))
+                
+                # Turn off LED after 2 seconds via background thread
+                def turn_off():
+                    time.sleep(2)
+                    try:
+                        if hasattr(self, 'ser2') and self.ser2 and self.ser2.is_open:
+                            self.ser2.write(b'\x00')
+                            time.sleep(0.05)
+                            packet_led_off = [0x05, 0xE8, 0x04, 0x00, 0x02]
+                            chk_led_off = (~sum(packet_led_off) + 1) & 0xFFFF
+                            packet_led_off.extend([(chk_led_off >> 8) & 0xFF, chk_led_off & 0xFF])
+                            self.ser2.write(bytes(packet_led_off))
+                    except Exception as ex:
+                        logging.error(f"[SCANNER2] Gagal mematikan LED Merah: {ex}")
+                threading.Thread(target=turn_off, daemon=True).start()
+        except Exception as e:
+            logging.error(f"[SCANNER2] Gagal memutar alarm suara scanner: {e}")
+
     # --- HTTP API & RAW PRINT LOGIC (SCANNER) ---
     def send_scanner_api(self, pack_code):
         # Tentukan URL berdasarkan mode Remove atau Normal
@@ -1082,9 +1120,11 @@ class ScannerApp(tk.Tk):
             else:
                 logging.error(f"[SCANNER2] [{mode_label}] API Gagal ({response.status_code}). Respon: {res_body}")
                 self.after(0, self.add_history, f"SCAN2 ERROR {response.status_code} -> QR: {pack_code}")
+                self.trigger_scanner2_error_alert()
         except requests.exceptions.RequestException as e:
             logging.error(f"[SCANNER2] [{mode_label}] Error Jaringan: {e}")
             self.after(0, self.add_history, f"SCAN2 JARINGAN ERROR -> Gagal Kirim QR: {pack_code}")
+            self.trigger_scanner2_error_alert()
 
     def scanner2_loop(self):
         while self.running:
