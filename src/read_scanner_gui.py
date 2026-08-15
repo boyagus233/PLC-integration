@@ -2488,6 +2488,22 @@ PRINT 2
                                 press_count = 0
                                 button_released_pending = False
                                 
+                    if SCANNER_REMOVE_ADDR:
+                        res_rm = self.get_omron_address_value(DOWNTIME_CONN_MODE, DOWNTIME_PLC_IP, DOWNTIME_PLC_PORT, DOWNTIME_PLC_BAUD, SCANNER_REMOVE_ADDR)
+                        if res_rm is not None:
+                            new_remove = (res_rm == "1")
+                            if new_remove != self.remove_mode:
+                                self.remove_mode = new_remove
+                                logging.info(f"[SCANNER] Remove button ({SCANNER_REMOVE_ADDR}) = {res_rm} -> remove_mode={self.remove_mode}")
+                                
+                    if SCANNER2_REMOVE_ADDR:
+                        res_rm2 = self.get_omron_address_value(DOWNTIME_CONN_MODE, DOWNTIME_PLC_IP, DOWNTIME_PLC_PORT, DOWNTIME_PLC_BAUD, SCANNER2_REMOVE_ADDR)
+                        if res_rm2 is not None:
+                            new_remove2 = (res_rm2 == "1")
+                            if new_remove2 != self.remove_mode2:
+                                self.remove_mode2 = new_remove2
+                                logging.info(f"[SCANNER2] Remove button ({SCANNER2_REMOVE_ADDR}) = {res_rm2} -> remove_mode2={self.remove_mode2}")
+                                
                     tick_counter += 1
                     time.sleep(0.04)
 
