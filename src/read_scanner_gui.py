@@ -1758,6 +1758,7 @@ PRINT 2
                     data.get("code_production") or 
                     metadata.get("codeProduction") or 
                     metadata.get("code_production") or 
+                    payload.get("codeProduction") or 
                     "-"
                 )
                 if isinstance(code_production, list):
@@ -1780,6 +1781,7 @@ PRINT 2
                     data.get("code_finishing") or 
                     metadata.get("codeFinishing") or 
                     metadata.get("code_finishing") or 
+                    payload.get("codeFinishing") or 
                     "-"
                 )
                 if isinstance(code_finishing, list):
