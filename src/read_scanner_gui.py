@@ -1758,7 +1758,6 @@ PRINT 2
                     data.get("code_production") or 
                     metadata.get("codeProduction") or 
                     metadata.get("code_production") or 
-                    payload.get("codeProduction") or 
                     "-"
                 )
                 if isinstance(code_production, list):
@@ -1985,20 +1984,6 @@ PRINT 2
                                 payload['timestamp'] = f"{year}-{month}-{day} {time_part}"
                             except:
                                 payload['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        elif key == "Product_Code1":
-                            clean_val = val.replace('\x00', '').strip()
-                            import re
-                            clean_val = re.sub(r'\s*\([A-Z_]+\)\s*$', '', clean_val).strip()
-                            if clean_val and clean_val != "-":
-                                if "codeProduction" not in payload: payload["codeProduction"] = []
-                                payload["codeProduction"].append(clean_val)
-                        elif key == "Product_Code2":
-                            clean_val = val.replace('\x00', '').strip()
-                            import re
-                            clean_val = re.sub(r'\s*\([A-Z_]+\)\s*$', '', clean_val).strip()
-                            if clean_val and clean_val != "-":
-                                if "codeProduction" not in payload: payload["codeProduction"] = []
-                                payload["codeProduction"].append(clean_val)
                         elif key == "Product_Finishing":
                             clean_val = val.replace('\x00', '').strip()
                             import re
