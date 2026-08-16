@@ -1300,6 +1300,7 @@ class ScannerApp(tk.Tk):
                 part_code = raw_part_code.split(" ")[0] if raw_part_code != "-" else "-"
 
                 batt_type = (
+                    metadata.get("part_code") or 
                     res_data.get("partName") or 
                     res_data.get("part_name") or 
                     metadata.get("partName") or 
