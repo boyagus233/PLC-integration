@@ -76,8 +76,9 @@ LOG_DIR_SCANNER   = os.path.join(LOG_DIR, "scanner")
 LOG_DIR_DOWNTIME  = os.path.join(LOG_DIR, "downtime")
 LOG_DIR_PRINTER   = os.path.join(LOG_DIR, "printer")
 LOG_DIR_TIMBANGAN = os.path.join(LOG_DIR, "timbangan")
+LOG_DIR_COUNTER   = os.path.join(LOG_DIR, "counter")
 
-for d in [LOG_DIR_SCANNER, LOG_DIR_DOWNTIME, LOG_DIR_PRINTER, LOG_DIR_TIMBANGAN]:
+for d in [LOG_DIR_SCANNER, LOG_DIR_DOWNTIME, LOG_DIR_PRINTER, LOG_DIR_TIMBANGAN, LOG_DIR_COUNTER]:
     os.makedirs(d, exist_ok=True)
 
 # Subfolders untuk Masterbox Watcher (di dalam logs/timbangan/)
@@ -2869,6 +2870,14 @@ PRINT 2
                         msg = f"Counter Baterai: Baterai #{local_counter} terdeteksi! (Tag: {BATTERY_COUNTER_TAG})"
                         logging.info(f"[BATTERY_COUNTER] {msg}")
                         self.after(0, self.add_history, msg)
+                        
+                        # Catat ke file log lokal logs/counter/battery_counter_log.txt
+                        try:
+                            counter_log_file = os.path.join(LOG_DIR_COUNTER, f"battery_counter_{datetime.now().strftime('%Y-%m-%d')}.txt")
+                            with open(counter_log_file, "a", encoding="utf-8") as f:
+                                f.write(f"[{timestamp_str}] Line: {BATTERY_COUNTER_LINE_NO} | Counter: {local_counter} | Tag: {BATTERY_COUNTER_TAG}\n")
+                        except Exception as e_log:
+                            logging.error(f"[BATTERY_COUNTER] Gagal tulis file log counter lokal: {e_log}")
                         
                         # Kirim data counter realtime ke backend API di thread terpisah
                         payload = {
