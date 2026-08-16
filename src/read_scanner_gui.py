@@ -425,6 +425,13 @@ def load_config():
     tb_tag_code_prod2 = config.get("TIMBANGAN_CONFIG", "TAG_CODE_PROD2", fallback="Product_Code2").strip()
     tb_tag_code_fns = config.get("TIMBANGAN_CONFIG", "TAG_CODE_FNS", fallback="Product_Finishing").strip()
     
+    # Ambil nilai Battery Counter (Rockwell Dedicated)
+    bc_enable = config.getboolean("BATTERY_COUNTER_CONFIG", "ENABLE", fallback=False)
+    bc_line_no = config.get("BATTERY_COUNTER_CONFIG", "LINE_NO", fallback="14").strip()
+    bc_plc_ip = config.get("BATTERY_COUNTER_CONFIG", "PLC_IP", fallback="192.168.1.20/1").strip()
+    bc_tag = config.get("BATTERY_COUNTER_CONFIG", "COUNTER_TAG", fallback="_IO_EM_DI_02").strip()
+    bc_url = resolve_url(config.get("BATTERY_COUNTER_CONFIG", "API_URL", fallback="/api/fix-scanner-battery-counter"))
+    
     # Parse List Alamat Downtime
     dt_addresses = []
     if dt_addresses_raw:
@@ -455,7 +462,8 @@ def load_config():
             pr_enable, pr_name, pr_url, pr_retry_url, pr_monitor_addr, pr_api_line, pr_label_line,
             pr_conn_mode, pr_plc_ip, pr_width, pr_height, pr_gap, pr_orientation,
             tb_enable, tb_line, tb_url, tb_retry_url, tb_width, tb_height, tb_gap, tb_orientation,
-            tb_conn_mode, tb_plc_ip, tb_plc_port, tb_plc_baud, tb_trigger_mode, tb_tag_weight, tb_tag_qty, tb_tag_type, tb_tag_totalizer, tb_tag_sensor, tb_tag_code_prod1, tb_tag_code_prod2, tb_tag_code_fns)
+            tb_conn_mode, tb_plc_ip, tb_plc_port, tb_plc_baud, tb_trigger_mode, tb_tag_weight, tb_tag_qty, tb_tag_type, tb_tag_totalizer, tb_tag_sensor, tb_tag_code_prod1, tb_tag_code_prod2, tb_tag_code_fns,
+            bc_enable, bc_line_no, bc_plc_ip, bc_tag, bc_url)
 
 (SCANNER_ENABLE, LINE_NO, PORT_SCANNER, BAUD_RATE, API_URL, SCANNER_REMOVE_API_URL, SCANNER_REMOVE_ADDR,
  SCANNER2_ENABLE, LINE_NO2, PORT_SCANNER2, BAUD_RATE2, API_URL2, SCANNER2_REMOVE_API_URL, SCANNER2_REMOVE_ADDR,
@@ -465,7 +473,8 @@ def load_config():
  TIMBANGAN_ENABLE, TIMBANGAN_LINE_NO, TIMBANGAN_API_URL, TIMBANGAN_RETRY_API_URL, 
  TIMBANGAN_WIDTH, TIMBANGAN_HEIGHT, TIMBANGAN_GAP, TIMBANGAN_ORIENTATION,
  TIMBANGAN_CONN_MODE, TIMBANGAN_PLC_IP, TIMBANGAN_PLC_PORT, TIMBANGAN_PLC_BAUD, TIMBANGAN_TRIGGER_MODE,
- TIMBANGAN_TAG_WEIGHT, TIMBANGAN_TAG_QTY, TIMBANGAN_TAG_TYPE, TIMBANGAN_TAG_TOTALIZER, TIMBANGAN_TAG_SENSOR, TIMBANGAN_TAG_CODE_PROD1, TIMBANGAN_TAG_CODE_PROD2, TIMBANGAN_TAG_CODE_FNS) = load_config()
+ TIMBANGAN_TAG_WEIGHT, TIMBANGAN_TAG_QTY, TIMBANGAN_TAG_TYPE, TIMBANGAN_TAG_TOTALIZER, TIMBANGAN_TAG_SENSOR, TIMBANGAN_TAG_CODE_PROD1, TIMBANGAN_TAG_CODE_PROD2, TIMBANGAN_TAG_CODE_FNS,
+ BATTERY_COUNTER_ENABLE, BATTERY_COUNTER_LINE_NO, BATTERY_COUNTER_PLC_IP, BATTERY_COUNTER_TAG, BATTERY_COUNTER_API_URL) = load_config()
 
 # Load http port configuration directly
 try:
@@ -644,6 +653,11 @@ class ScannerApp(tk.Tk):
         else:
             self.timbangan_status.set("TIMBANGAN INACTIVE")
             self.timbangan_color.set("#64748b")
+            
+        # Start Battery Counter Thread (Dedicated Independent Rockwell Connection)
+        if BATTERY_COUNTER_ENABLE:
+            self.battery_counter_thread = threading.Thread(target=self.battery_counter_loop, daemon=True)
+            self.battery_counter_thread.start()
             
         # Start HTTP Server for Handheld/Mobile Printing
         if PRINTER_ENABLE:
@@ -2816,6 +2830,80 @@ PRINT 2
                     except Exception as e_loop:
                         logging.error(f"[TIMBANGAN] Omron read error: {e_loop}")
                         break
+
+    # --- LOOP UTAMA PEMANTAUAN COUNTER BATERAI INDEPENDEN (ROCKWELL PLC) ---
+    def battery_counter_loop(self):
+        """Loop pemantauan independen untuk Counter Baterai di Conveyor via Rockwell PLC"""
+        if not BATTERY_COUNTER_ENABLE:
+            return
+            
+        if not PYCOMM3_AVAILABLE:
+            logging.error("[BATTERY_COUNTER] pycomm3 tidak terinstal. Pemantauan counter dibatalkan.")
+            return
+
+        logging.info(f"[BATTERY_COUNTER] Memulai pemantauan Counter Baterai di Rockwell PLC {BATTERY_COUNTER_PLC_IP} (Tag: {BATTERY_COUNTER_TAG})...")
+        
+        while self.running:
+            try:
+                plc = LogixDriver(BATTERY_COUNTER_PLC_IP)
+                plc.open()
+                logging.info(f"[BATTERY_COUNTER] Terhubung ke Rockwell PLC {BATTERY_COUNTER_PLC_IP}!")
+                self.after(0, self.add_history, f"Counter Baterai: Terhubung ke PLC Rockwell {BATTERY_COUNTER_PLC_IP}")
+                
+                last_sensor_state = False
+                local_counter = 0
+                
+                while self.running:
+                    res = plc.read(BATTERY_COUNTER_TAG)
+                    if res is None or res.value is None:
+                        raise RuntimeError("Gagal membaca tag counter dari PLC")
+                        
+                    current_sensor_state = bool(res.value)
+                    
+                    # Deteksi Falling Edge: Sensor aktif (1) lalu mati (0) -> 1 Baterai Lewat!
+                    if not current_sensor_state and last_sensor_state:
+                        local_counter += 1
+                        now = datetime.now()
+                        timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")
+                        
+                        msg = f"Counter Baterai: Baterai #{local_counter} terdeteksi! (Tag: {BATTERY_COUNTER_TAG})"
+                        logging.info(f"[BATTERY_COUNTER] {msg}")
+                        self.after(0, self.add_history, msg)
+                        
+                        # Kirim data counter realtime ke backend API di thread terpisah
+                        payload = {
+                            "line_no": str(BATTERY_COUNTER_LINE_NO),
+                            "counter": local_counter,
+                            "tag_name": BATTERY_COUNTER_TAG,
+                            "timestamp": timestamp_str
+                        }
+                        threading.Thread(
+                            target=self.send_battery_counter_api,
+                            args=(payload,),
+                            daemon=True
+                        ).start()
+                        
+                    last_sensor_state = current_sensor_state
+                    time.sleep(0.04) # Interval baca 40ms (~25 FPS) agar pulsa cepat terdeteksi akurat
+                    
+            except Exception as e:
+                logging.error(f"[BATTERY_COUNTER] Rockwell Connection Error: {e}")
+                for _ in range(30):
+                    if not self.running: break
+                    time.sleep(0.1)
+
+    def send_battery_counter_api(self, payload):
+        """Mengirim data counter baterai realtime ke Backend API"""
+        try:
+            headers = {'Content-Type': 'application/json'}
+            logging.info(f"[BATTERY_COUNTER] Kirim data counter ke {BATTERY_COUNTER_API_URL}: {payload}")
+            response = requests.post(BATTERY_COUNTER_API_URL, json=payload, headers=headers, timeout=5, verify=False)
+            if response.status_code in [200, 201]:
+                logging.info(f"[BATTERY_COUNTER] API Counter Sukses ({response.status_code})")
+            else:
+                logging.warning(f"[BATTERY_COUNTER] API Counter Respon Error ({response.status_code}): {response.text[:60]}")
+        except Exception as e:
+            logging.error(f"[BATTERY_COUNTER] Error Jaringan ke API Counter: {e}")
 
     def start_http_server(self):
         port = HTTP_PORT
