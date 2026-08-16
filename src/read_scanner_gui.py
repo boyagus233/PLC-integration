@@ -1784,7 +1784,11 @@ PRINT 2
                 if isinstance(code_finishing, list):
                     code_finishing = ','.join([str(c) for c in code_finishing])
                 
-                weight = res_data.get("quantityWeight") or metadata.get("weight") or payload.get("weight", "0.0")
+                p_weight = payload.get("weight")
+                if p_weight is not None and float(p_weight) > 0:
+                    weight = p_weight
+                else:
+                    weight = res_data.get("quantityWeight") or metadata.get("weight") or "0.0"
                 quantity = res_data.get("quantityPcs") or metadata.get("quantity") or payload.get("quantity", "0")
                 
                 logging.info(f"[MASTERBOX] API Sukses ({response.status_code}). Code: {code}, PartCode: {part_code}, Type: {batt_type}, CodeProd: {code_production}, CodeFNS: {code_finishing}")
@@ -2612,6 +2616,7 @@ PRINT 2
                     self.after(0, self.set_timbangan_status, "TIMBANGAN READY", "#22c55e", "Rockwell Online")
                     self.after(0, self.add_history, f"Timbangan: Terhubung ke PLC Rockwell {TIMBANGAN_PLC_IP}.")
                     
+                    box_queue = []  # Antrean FIFO snapshot data kardus yang selesai ditimbang (Totalizer bertambah)
                     last_box = None
                     last_sensor_state = False
                     pending_boxes = 0  # Jumlah box valid (Timbangan HIJAU / Totalizer bertambah)
@@ -2645,10 +2650,19 @@ PRINT 2
                         except:
                             weight_val = 0.0
                             
-                        # 1. Pantau Perubahan Totalizer (Timbangan HIJAU / OK)
+                        # 1. Pantau Perubahan Totalizer (Timbangan HIJAU / OK) -> Simpan Snapshot Kardus ke Antrean FIFO
                         if current_box is not None and last_box is not None and current_box != last_box:
                             pending_boxes += 1
-                            logging.info(f"[TIMBANGAN] Timbangan HIJAU! Totalizer bertambah ({last_box} -> {current_box}). Pending Box Siap Cetak = {pending_boxes}")
+                            box_snapshot = {
+                                "weight": weight_val,
+                                "qty": current_values.get(TIMBANGAN_TAG_QTY, 0),
+                                "type": current_values.get(TIMBANGAN_TAG_TYPE, '-'),
+                                "code_prod1": current_values.get(TIMBANGAN_TAG_CODE_PROD1, '-'),
+                                "code_prod2": current_values.get(TIMBANGAN_TAG_CODE_PROD2, '-'),
+                                "code_fns": current_values.get(TIMBANGAN_TAG_CODE_FNS, '-'),
+                            }
+                            box_queue.append(box_snapshot)
+                            logging.info(f"[TIMBANGAN] Timbangan HIJAU! Totalizer bertambah ({last_box} -> {current_box}). Kardus ({weight_val} KG) masuk antrean FIFO. Total antrean = {len(box_queue)}")
                         last_box = current_box
 
                         # 2. Evaluasi Trigger berdasarkan TRIGGER_MODE (auto, sensor, totalizer)
@@ -2663,12 +2677,12 @@ PRINT 2
                             # Sinyal Sensor Naik (0 -> 1)
                             if current_sensor_state and not last_sensor_state:
                                 if mode in ["auto", "sensor"]:
-                                    # SAFETY GUARD: Wajib ada Totalizer Baru ATAU Berat > 0.1 KG
-                                    if pending_boxes > 0 or weight_val > 0.1:
+                                    # SAFETY GUARD: Wajib ada antrean box ATAU Totalizer Baru ATAU Berat > 0.1 KG
+                                    if box_queue or pending_boxes > 0 or weight_val > 0.1:
                                         triggered = True
                                         if pending_boxes > 0:
                                             pending_boxes -= 1
-                                        logging.info(f"[TIMBANGAN] [TRIGGER VALID] Sensor sealer mendeteksi kardus lewat ({TIMBANGAN_TAG_SENSOR}) & Timbangan HIJAU/Valid ({weight_val} KG)! Eksekusi print...")
+                                        logging.info(f"[TIMBANGAN] [TRIGGER VALID] Sensor sealer mendeteksi kardus lewat ({TIMBANGAN_TAG_SENSOR})! Eksekusi print...")
                                     else:
                                         display_warn = f"Timbangan: Sensor tersenggol ({TIMBANGAN_TAG_SENSOR}) TAPI timbangan belum HIJAU (Berat {weight_val} KG)! Print DIBATALKAN."
                                         logging.warning(f"[TIMBANGAN] {display_warn}")
@@ -2678,9 +2692,10 @@ PRINT 2
                         
                         # Trigger Mode Totalizer Murni (tanpa sensor sealer)
                         if not triggered and mode == "totalizer":
-                            if pending_boxes > 0 and weight_val > 0.1:
+                            if box_queue or (pending_boxes > 0 and weight_val > 0.1):
                                 triggered = True
-                                pending_boxes -= 1
+                                if pending_boxes > 0:
+                                    pending_boxes -= 1
                                 logging.info(f"[TIMBANGAN] [TRIGGER: TOTALIZER] Totalizer box bertambah & Berat Valid ({weight_val} KG)")
                             
                         if not triggered:
@@ -2688,6 +2703,19 @@ PRINT 2
                             continue
                             
                         local_counter += 1
+                        
+                        # Ambil data snapshot kardus terdepan dari antrean FIFO
+                        if box_queue:
+                            target_box = box_queue.pop(0)
+                        else:
+                            target_box = {
+                                "weight": weight_val,
+                                "qty": current_values.get(TIMBANGAN_TAG_QTY, 0),
+                                "type": current_values.get(TIMBANGAN_TAG_TYPE, '-'),
+                                "code_prod1": current_values.get(TIMBANGAN_TAG_CODE_PROD1, '-'),
+                                "code_prod2": current_values.get(TIMBANGAN_TAG_CODE_PROD2, '-'),
+                                "code_fns": current_values.get(TIMBANGAN_TAG_CODE_FNS, '-'),
+                            }
                         
                         now = datetime.now()
                         time_full = now.strftime("%d%m%Y %H:%M:%S")
@@ -2697,19 +2725,19 @@ PRINT 2
                         lines = [
                             f"ID: {local_counter}",
                             f"Line_No : {TIMBANGAN_LINE_NO}",
-                            f"Recent_Weight: {current_values.get(TIMBANGAN_TAG_WEIGHT, 0.0)} (REAL)",
-                            f"Recent_Qty: {current_values.get(TIMBANGAN_TAG_QTY, 0)} (DINT)",
-                            f"Product_Type: {current_values.get(TIMBANGAN_TAG_TYPE, '-')} (STRING)",
-                            f"Product_Code1: {current_values.get(TIMBANGAN_TAG_CODE_PROD1, '-')} (STRING)",
-                            f"Product_Code2: {current_values.get(TIMBANGAN_TAG_CODE_PROD2, '-')} (STRING)",
-                            f"Product_Finishing: {current_values.get(TIMBANGAN_TAG_CODE_FNS, '-')} (STRING)",
+                            f"Recent_Weight: {target_box['weight']} (REAL)",
+                            f"Recent_Qty: {target_box['qty']} (DINT)",
+                            f"Product_Type: {target_box['type']} (STRING)",
+                            f"Product_Code1: {target_box['code_prod1']} (STRING)",
+                            f"Product_Code2: {target_box['code_prod2']} (STRING)",
+                            f"Product_Finishing: {target_box['code_fns']} (STRING)",
                             f"Timestamp: {time_full}",
                             "----------------------------------------"
                         ]
                         with open(filename, "w", encoding="utf-8") as f:
                             for l in lines: f.write(l + "\n")
                             
-                        msg = f"Timbangan: Box Baru #{local_counter} ditimbang ({current_values.get(TIMBANGAN_TAG_WEIGHT, 0.0)} KG)"
+                        msg = f"Timbangan: Box Baru #{local_counter} ditimbang ({target_box['weight']} KG)"
                         self.after(0, self.add_history, msg)
                         logging.info(f"[TIMBANGAN] {msg}")
                         time.sleep(0.25)
