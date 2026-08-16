@@ -15,6 +15,12 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import subprocess
 
+try:
+    import winsound
+    WINSOUND_AVAILABLE = True
+except ImportError:
+    WINSOUND_AVAILABLE = False
+
 # PyWin32 and PyWinAuto imports
 try:
     import win32print
@@ -913,21 +919,39 @@ class ScannerApp(tk.Tk):
             messagebox.showerror("Input Error", "Isian Berat harus angka desimal dan Quantity harus angka bulat!")
 
     def trigger_scanner_error_alert(self):
-        """Mengirim perintah SSI Host Command untuk BEEP Slow Warble dan LED Merah ke Scanner 1"""
+        """Mengirim perintah SSI Host Command untuk BEEP Slow Warble dan LED Merah ke Scanner 1 + PC Speaker Alert"""
+        # 1. Bunyikan Alarm BEEP di PC Speaker (3x Beep Nyaring)
+        def play_pc_sound():
+            try:
+                if WINSOUND_AVAILABLE:
+                    for _ in range(3):
+                        winsound.Beep(2500, 180)
+                        time.sleep(0.08)
+            except Exception:
+                try:
+                    if WINSOUND_AVAILABLE:
+                        winsound.MessageBeep(winsound.MB_ICONHAND)
+                except Exception:
+                    pass
+        threading.Thread(target=play_pc_sound, daemon=True).start()
+
+        # 2. Kirim perintah SSI ke Scanner Zebra Fisik
         try:
             if hasattr(self, 'ser') and self.ser and self.ser.is_open:
-                # 1. Turn on Red LED (0x02)
+                # WAKEUP: Kirim byte \x00 dan tunggu 100ms
                 self.ser.write(b'\x00')
-                time.sleep(0.05)
+                time.sleep(0.1)
+                
+                # Turn on Red LED (0x02)
                 packet_led = [0x05, 0xE7, 0x04, 0x00, 0x02]
                 chk_led = (~sum(packet_led) + 1) & 0xFFFF
                 packet_led.extend([(chk_led >> 8) & 0xFF, chk_led & 0xFF])
                 self.ser.write(bytes(packet_led))
                 
-                # 2. Play Beep 22 / Slow Warble (0x15)
-                time.sleep(0.05)
+                # Play Beep 22 / Slow Warble (0x15)
+                time.sleep(0.1)
                 self.ser.write(b'\x00')
-                time.sleep(0.05)
+                time.sleep(0.1)
                 packet_beep = [0x05, 0xE6, 0x04, 0x00, 0x15]
                 chk_beep = (~sum(packet_beep) + 1) & 0xFFFF
                 packet_beep.extend([(chk_beep >> 8) & 0xFF, chk_beep & 0xFF])
@@ -939,7 +963,7 @@ class ScannerApp(tk.Tk):
                     try:
                         if hasattr(self, 'ser') and self.ser and self.ser.is_open:
                             self.ser.write(b'\x00')
-                            time.sleep(0.05)
+                            time.sleep(0.1)
                             packet_led_off = [0x05, 0xE8, 0x04, 0x00, 0x02]
                             chk_led_off = (~sum(packet_led_off) + 1) & 0xFFFF
                             packet_led_off.extend([(chk_led_off >> 8) & 0xFF, chk_led_off & 0xFF])
@@ -951,21 +975,39 @@ class ScannerApp(tk.Tk):
             logging.error(f"[SCANNER] Gagal memutar alarm suara scanner: {e}")
 
     def trigger_scanner2_error_alert(self):
-        """Mengirim perintah SSI Host Command untuk BEEP Slow Warble dan LED Merah ke Scanner 2"""
+        """Mengirim perintah SSI Host Command untuk BEEP Slow Warble dan LED Merah ke Scanner 2 + PC Speaker Alert"""
+        # 1. Bunyikan Alarm BEEP di PC Speaker (3x Beep Nyaring)
+        def play_pc_sound():
+            try:
+                if WINSOUND_AVAILABLE:
+                    for _ in range(3):
+                        winsound.Beep(2500, 180)
+                        time.sleep(0.08)
+            except Exception:
+                try:
+                    if WINSOUND_AVAILABLE:
+                        winsound.MessageBeep(winsound.MB_ICONHAND)
+                except Exception:
+                    pass
+        threading.Thread(target=play_pc_sound, daemon=True).start()
+
+        # 2. Kirim perintah SSI ke Scanner 2 Fisik
         try:
             if hasattr(self, 'ser2') and self.ser2 and self.ser2.is_open:
-                # 1. Turn on Red LED (0x02)
+                # WAKEUP: Kirim byte \x00 dan tunggu 100ms
                 self.ser2.write(b'\x00')
-                time.sleep(0.05)
+                time.sleep(0.1)
+                
+                # Turn on Red LED (0x02)
                 packet_led = [0x05, 0xE7, 0x04, 0x00, 0x02]
                 chk_led = (~sum(packet_led) + 1) & 0xFFFF
                 packet_led.extend([(chk_led >> 8) & 0xFF, chk_led & 0xFF])
                 self.ser2.write(bytes(packet_led))
                 
-                # 2. Play Beep 22 / Slow Warble (0x15)
-                time.sleep(0.05)
+                # Play Beep 22 / Slow Warble (0x15)
+                time.sleep(0.1)
                 self.ser2.write(b'\x00')
-                time.sleep(0.05)
+                time.sleep(0.1)
                 packet_beep = [0x05, 0xE6, 0x04, 0x00, 0x15]
                 chk_beep = (~sum(packet_beep) + 1) & 0xFFFF
                 packet_beep.extend([(chk_beep >> 8) & 0xFF, chk_beep & 0xFF])
@@ -977,7 +1019,7 @@ class ScannerApp(tk.Tk):
                     try:
                         if hasattr(self, 'ser2') and self.ser2 and self.ser2.is_open:
                             self.ser2.write(b'\x00')
-                            time.sleep(0.05)
+                            time.sleep(0.1)
                             packet_led_off = [0x05, 0xE8, 0x04, 0x00, 0x02]
                             chk_led_off = (~sum(packet_led_off) + 1) & 0xFFFF
                             packet_led_off.extend([(chk_led_off >> 8) & 0xFF, chk_led_off & 0xFF])
@@ -1019,9 +1061,9 @@ class ScannerApp(tk.Tk):
                 logging.error(f"[SCANNER] [{mode_label}] API Gagal ({response.status_code}). Respon: {res_body}")
                 self.after(0, self.add_history, f"SCAN ERROR {response.status_code} -> QR: {pack_code}")
                 self.trigger_scanner_error_alert()
-        except requests.exceptions.RequestException as e:
-            logging.error(f"[SCANNER] [{mode_label}] Error Jaringan: {e}")
-            self.after(0, self.add_history, f"SCAN JARINGAN ERROR -> Gagal Kirim QR: {pack_code}")
+        except Exception as e:
+            logging.error(f"[SCANNER] [{mode_label}] Error: {e}")
+            self.after(0, self.add_history, f"SCAN ERROR -> Gagal Kirim QR: {pack_code}")
             self.trigger_scanner_error_alert()
             
     def scanner_loop(self):
@@ -1121,9 +1163,9 @@ class ScannerApp(tk.Tk):
                 logging.error(f"[SCANNER2] [{mode_label}] API Gagal ({response.status_code}). Respon: {res_body}")
                 self.after(0, self.add_history, f"SCAN2 ERROR {response.status_code} -> QR: {pack_code}")
                 self.trigger_scanner2_error_alert()
-        except requests.exceptions.RequestException as e:
-            logging.error(f"[SCANNER2] [{mode_label}] Error Jaringan: {e}")
-            self.after(0, self.add_history, f"SCAN2 JARINGAN ERROR -> Gagal Kirim QR: {pack_code}")
+        except Exception as e:
+            logging.error(f"[SCANNER2] [{mode_label}] Error: {e}")
+            self.after(0, self.add_history, f"SCAN2 ERROR -> Gagal Kirim QR: {pack_code}")
             self.trigger_scanner2_error_alert()
 
     def scanner2_loop(self):
