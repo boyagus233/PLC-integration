@@ -549,21 +549,25 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             self.send_response_json({"status": "error", "message": "App instance not ready"}, 500)
 
     def do_GET(self):
-        if self.path.startswith('/print-pallet') or self.path.startswith('/reprint-pallet'):
+        if self.path.startswith('/print-pallet') or self.path.startswith('/reprint-pallet') or self.path.startswith('/api/fix-scanner-pallet-retry'):
             params = self.parse_query_params()
             path_clean = self.path.split('?')[0].rstrip('/')
             path_code = None
-            if path_clean.startswith('/print-pallet/'):
-                path_code = path_clean.replace('/print-pallet/', '').strip()
-            elif path_clean.startswith('/reprint-pallet/'):
-                path_code = path_clean.replace('/reprint-pallet/', '').strip()
+            for prefix in ['/print-pallet/', '/reprint-pallet/', '/api/fix-scanner-pallet-retry/']:
+                if path_clean.startswith(prefix):
+                    path_code = path_clean.replace(prefix, '').strip()
+                    break
             pack_code = path_code or params.get('pack_code') or params.get('packCode') or params.get('code')
-            is_retry = self.path.startswith('/reprint-pallet') or (pack_code is not None)
+            is_retry = self.path.startswith('/reprint-pallet') or self.path.startswith('/api/fix-scanner-pallet-retry') or (pack_code is not None)
             self.handle_print_request(is_retry, pack_code=pack_code)
-        elif self.path.startswith('/reprint-masterbox'):
+        elif self.path.startswith('/reprint-masterbox') or self.path.startswith('/api/fix-scanner-timbangan-retry'):
             params = self.parse_query_params()
             path_clean = self.path.split('?')[0].rstrip('/')
-            path_code = path_clean.replace('/reprint-masterbox/', '').strip() if path_clean.startswith('/reprint-masterbox/') else None
+            path_code = None
+            for prefix in ['/reprint-masterbox/', '/api/fix-scanner-timbangan-retry/']:
+                if path_clean.startswith(prefix):
+                    path_code = path_clean.replace(prefix, '').strip()
+                    break
             pack_code = path_code or params.get('pack_code') or params.get('packCode') or params.get('code')
             if self.app_instance:
                 success, msg, http_code = self.app_instance.reprint_masterbox(pack_code)
@@ -591,23 +595,27 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             self.send_response_json({"status": "error", "message": "Endpoint not found"}, 404)
 
     def do_POST(self):
-        if self.path.startswith('/print-pallet') or self.path.startswith('/reprint-pallet'):
+        if self.path.startswith('/print-pallet') or self.path.startswith('/reprint-pallet') or self.path.startswith('/api/fix-scanner-pallet-retry'):
             body = self.parse_json_body()
             params = self.parse_query_params()
             path_clean = self.path.split('?')[0].rstrip('/')
             path_code = None
-            if path_clean.startswith('/print-pallet/'):
-                path_code = path_clean.replace('/print-pallet/', '').strip()
-            elif path_clean.startswith('/reprint-pallet/'):
-                path_code = path_clean.replace('/reprint-pallet/', '').strip()
+            for prefix in ['/print-pallet/', '/reprint-pallet/', '/api/fix-scanner-pallet-retry/']:
+                if path_clean.startswith(prefix):
+                    path_code = path_clean.replace(prefix, '').strip()
+                    break
             pack_code = path_code or body.get('pack_code') or body.get('packCode') or body.get('code') or params.get('pack_code') or params.get('packCode') or params.get('code')
-            is_retry = self.path.startswith('/reprint-pallet') or (pack_code is not None)
+            is_retry = self.path.startswith('/reprint-pallet') or self.path.startswith('/api/fix-scanner-pallet-retry') or (pack_code is not None)
             self.handle_print_request(is_retry, pack_code=pack_code)
-        elif self.path.startswith('/reprint-masterbox'):
+        elif self.path.startswith('/reprint-masterbox') or self.path.startswith('/api/fix-scanner-timbangan-retry'):
             body = self.parse_json_body()
             params = self.parse_query_params()
             path_clean = self.path.split('?')[0].rstrip('/')
-            path_code = path_clean.replace('/reprint-masterbox/', '').strip() if path_clean.startswith('/reprint-masterbox/') else None
+            path_code = None
+            for prefix in ['/reprint-masterbox/', '/api/fix-scanner-timbangan-retry/']:
+                if path_clean.startswith(prefix):
+                    path_code = path_clean.replace(prefix, '').strip()
+                    break
             pack_code = path_code or body.get('pack_code') or body.get('packCode') or body.get('code') or params.get('pack_code') or params.get('packCode') or params.get('code')
             if self.app_instance:
                 success, msg, http_code = self.app_instance.reprint_masterbox(pack_code)
