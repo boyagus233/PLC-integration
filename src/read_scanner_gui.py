@@ -553,7 +553,9 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             self.handle_print_request(True)
         elif self.path.startswith('/reprint-masterbox'):
             params = self.parse_query_params()
-            pack_code = params.get('pack_code') or params.get('packCode') or params.get('code')
+            path_clean = self.path.split('?')[0].rstrip('/')
+            path_code = path_clean.replace('/reprint-masterbox/', '').strip() if path_clean.startswith('/reprint-masterbox/') else None
+            pack_code = path_code or params.get('pack_code') or params.get('packCode') or params.get('code')
             if self.app_instance:
                 self.app_instance.after(0, self.app_instance.reprint_masterbox, pack_code)
                 msg = f"Master Box reprint triggered successfully ({pack_code if pack_code else 'latest'})"
@@ -583,7 +585,9 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
         elif self.path.startswith('/reprint-masterbox'):
             body = self.parse_json_body()
             params = self.parse_query_params()
-            pack_code = body.get('pack_code') or body.get('packCode') or body.get('code') or params.get('pack_code') or params.get('packCode') or params.get('code')
+            path_clean = self.path.split('?')[0].rstrip('/')
+            path_code = path_clean.replace('/reprint-masterbox/', '').strip() if path_clean.startswith('/reprint-masterbox/') else None
+            pack_code = path_code or body.get('pack_code') or body.get('packCode') or body.get('code') or params.get('pack_code') or params.get('packCode') or params.get('code')
             if self.app_instance:
                 self.app_instance.after(0, self.app_instance.reprint_masterbox, pack_code)
                 msg = f"Master Box reprint triggered successfully ({pack_code if pack_code else 'latest'})"
@@ -1905,7 +1909,9 @@ PRINT 2
                 
                 # 1. Part Code & TYPE (TYPE wajib dari metadata.part_code)
                 part_code = res_data.get("partCode") or data.get("partCode") or res_data.get("part_code") or "-"
-                batt_type = metadata.get("part_code") or payload.get("part_code") or res_data.get("partName") or "-"
+                raw_type = metadata.get("part_code") or payload.get("part_code") or res_data.get("partName") or "-"
+                import re
+                batt_type = re.sub(r'\s*\([A-Z_]+\)\s*$', '', str(raw_type)).strip()
 
                 # 2. Prod/Shift/Mc & Waktu (Waktu dari createdAt)
                 created_at_raw = res_data.get("createdAt") or data.get("createdAt") or metadata.get("timestamp") or ""
