@@ -1481,6 +1481,13 @@ class ScannerApp(tk.Tk):
             self.after(0, self.set_printer_status, "CETAK ERROR (DRV)", "#ef4444", "Library win32print missing")
             return
             
+        printer_ready, printer_msg = self.check_physical_printer_status(PRINTER_NAME)
+        if not printer_ready:
+            logging.error(f"[PRINTER] {printer_msg}")
+            self.after(0, self.add_history, f"PRINTER ERROR -> {printer_msg}")
+            self.after(0, self.set_printer_status, "PRINTER OFFLINE", "#ef4444", "Kabel USB Terlepas")
+            return
+            
         code = data_dict.get("code", "-")
         part_code = data_dict.get("part_code", "-")
         batt_type = data_dict.get("batt_type", "-")
@@ -1620,10 +1627,11 @@ PRINT 1
     def reset_printer_visual_state(self):
         if not self.running:
             return
-        if self.check_printer_connection():
+        is_ready, msg = self.check_physical_printer_status(PRINTER_NAME)
+        if is_ready:
             self.set_printer_status("PRINTER READY", "#22c55e", f"Target: {PRINTER_NAME}")
         else:
-            self.set_printer_status("PRINTER NOT FOUND", "#ef4444", f"Mencari: {PRINTER_NAME}")
+            self.set_printer_status("PRINTER OFFLINE", "#ef4444", "Kabel USB Terlepas")
 
     # --- HTTP API & RAW PRINT LOGIC (MASTER BOX) ---
     def execute_physical_print_masterbox(self, code, part_code, batt_type, weight, quantity, date_str, time_str="-", code_production="-", code_finishing="-", code_production_qty=""):
@@ -1746,7 +1754,15 @@ TEXT 280,330,"2",0,1,1,"Kode Prod  : {code_production}"
 TEXT 280,370,"2",0,1,1,"Kode FNS   : {code_finishing}"
 PRINT 2
 """
-        logging.info(f"[MASTERBOX] Mengirim raw data ke printer...")
+        # Cek apakah printer fisik terhubung dan Online di Windows (bukan status Spooler)
+        printer_ready, printer_msg = self.check_physical_printer_status(PRINTER_NAME)
+        if not printer_ready:
+            logging.error(f"[MASTERBOX] {printer_msg}")
+            self.after(0, self.add_history, f"MASTERBOX ERROR -> {printer_msg}")
+            self.after(0, self.set_printer_status, "PRINTER OFFLINE", "#ef4444", "Kabel USB Terlepas")
+            return False, printer_msg
+
+        logging.info(f"[MASTERBOX] Mengirim raw data ke printer {PRINTER_NAME}...")
         try:
             hPrinter = win32print.OpenPrinter(PRINTER_NAME)
             try:
@@ -1767,6 +1783,40 @@ PRINT 2
             logging.error(f"[MASTERBOX] {err_msg}")
             self.after(0, self.add_history, f"MASTERBOX ERROR -> Gagal cetak stiker Master Box.")
             return False, err_msg
+
+    def check_physical_printer_status(self, printer_name):
+        """Memeriksa status fisik printer di Windows Spooler (Cek Offline/USB Unplugged)"""
+        if not PYWIN32_AVAILABLE:
+            return False, "Library win32print missing"
+        try:
+            hPrinter = win32print.OpenPrinter(printer_name)
+            try:
+                p_info = win32print.GetPrinter(hPrinter, 2)
+                status = p_info.get('Status', 0)
+                attributes = p_info.get('Attributes', 0)
+                
+                PRINTER_STATUS_PAUSED = 0x00000001
+                PRINTER_STATUS_ERROR = 0x00000002
+                PRINTER_STATUS_PAPER_JAM = 0x00000008
+                PRINTER_STATUS_PAPER_OUT = 0x00000010
+                PRINTER_STATUS_OFFLINE = 0x00000080
+                PRINTER_STATUS_NOT_AVAILABLE = 0x00001000
+                PRINTER_ATTRIBUTE_WORK_OFFLINE = 0x00000400
+                
+                if (status & PRINTER_STATUS_OFFLINE) or (attributes & PRINTER_ATTRIBUTE_WORK_OFFLINE) or (status & PRINTER_STATUS_NOT_AVAILABLE) or (status & PRINTER_STATUS_ERROR):
+                    return False, f"Printer '{printer_name}' terdeteksi OFFLINE / kabel USB terlepas"
+                if status & PRINTER_STATUS_PAPER_OUT:
+                    return False, f"Printer '{printer_name}' KERTAS HABIS"
+                if status & PRINTER_STATUS_PAPER_JAM:
+                    return False, f"Printer '{printer_name}' KERTAS MACET"
+                if status & PRINTER_STATUS_PAUSED:
+                    return False, f"Printer '{printer_name}' status PAUSED"
+                    
+                return True, "Printer Online & Ready"
+            finally:
+                win32print.ClosePrinter(hPrinter)
+        except Exception as e:
+            return False, f"Printer '{printer_name}' tidak terinstall / terputus: {e}"
 
     def send_masterbox_api_and_print(self, payload, file_path):
         """Mengirim data hasil penimbangan ke API Master Box lalu mencetak stiker secara otomatis"""
