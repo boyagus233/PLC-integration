@@ -558,6 +558,8 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
                     path_code = path_clean.replace(prefix, '').strip()
                     break
             pack_code = path_code or params.get('pack_code') or params.get('packCode') or params.get('code')
+            if pack_code:
+                pack_code = str(pack_code).strip('() ').strip()
             is_retry = self.path.startswith('/reprint-pallet') or self.path.startswith('/api/fix-scanner-pallet-retry') or (pack_code is not None)
             self.handle_print_request(is_retry, pack_code=pack_code)
         elif self.path.startswith('/reprint-masterbox') or self.path.startswith('/api/fix-scanner-masterbox-retry') or self.path.startswith('/api/fix-scanner-timbangan-retry'):
@@ -569,6 +571,8 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
                     path_code = path_clean.replace(prefix, '').strip()
                     break
             pack_code = path_code or params.get('pack_code') or params.get('packCode') or params.get('code')
+            if pack_code:
+                pack_code = str(pack_code).strip('() ').strip()
             if self.app_instance:
                 success, msg, http_code = self.app_instance.reprint_masterbox(pack_code)
                 self.send_response_json({
@@ -605,6 +609,8 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
                     path_code = path_clean.replace(prefix, '').strip()
                     break
             pack_code = path_code or body.get('pack_code') or body.get('packCode') or body.get('code') or params.get('pack_code') or params.get('packCode') or params.get('code')
+            if pack_code:
+                pack_code = str(pack_code).strip('() ').strip()
             is_retry = self.path.startswith('/reprint-pallet') or self.path.startswith('/api/fix-scanner-pallet-retry') or (pack_code is not None)
             self.handle_print_request(is_retry, pack_code=pack_code)
         elif self.path.startswith('/reprint-masterbox') or self.path.startswith('/api/fix-scanner-masterbox-retry') or self.path.startswith('/api/fix-scanner-timbangan-retry'):
@@ -617,6 +623,8 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
                     path_code = path_clean.replace(prefix, '').strip()
                     break
             pack_code = path_code or body.get('pack_code') or body.get('packCode') or body.get('code') or params.get('pack_code') or params.get('packCode') or params.get('code')
+            if pack_code:
+                pack_code = str(pack_code).strip('() ').strip()
             if self.app_instance:
                 success, msg, http_code = self.app_instance.reprint_masterbox(pack_code)
                 self.send_response_json({
