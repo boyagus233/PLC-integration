@@ -560,11 +560,11 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             pack_code = path_code or params.get('pack_code') or params.get('packCode') or params.get('code')
             is_retry = self.path.startswith('/reprint-pallet') or self.path.startswith('/api/fix-scanner-pallet-retry') or (pack_code is not None)
             self.handle_print_request(is_retry, pack_code=pack_code)
-        elif self.path.startswith('/reprint-masterbox') or self.path.startswith('/api/fix-scanner-timbangan-retry'):
+        elif self.path.startswith('/reprint-masterbox') or self.path.startswith('/api/fix-scanner-masterbox-retry') or self.path.startswith('/api/fix-scanner-timbangan-retry'):
             params = self.parse_query_params()
             path_clean = self.path.split('?')[0].rstrip('/')
             path_code = None
-            for prefix in ['/reprint-masterbox/', '/api/fix-scanner-timbangan-retry/']:
+            for prefix in ['/reprint-masterbox/', '/api/fix-scanner-masterbox-retry/', '/api/fix-scanner-timbangan-retry/']:
                 if path_clean.startswith(prefix):
                     path_code = path_clean.replace(prefix, '').strip()
                     break
@@ -607,12 +607,12 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             pack_code = path_code or body.get('pack_code') or body.get('packCode') or body.get('code') or params.get('pack_code') or params.get('packCode') or params.get('code')
             is_retry = self.path.startswith('/reprint-pallet') or self.path.startswith('/api/fix-scanner-pallet-retry') or (pack_code is not None)
             self.handle_print_request(is_retry, pack_code=pack_code)
-        elif self.path.startswith('/reprint-masterbox') or self.path.startswith('/api/fix-scanner-timbangan-retry'):
+        elif self.path.startswith('/reprint-masterbox') or self.path.startswith('/api/fix-scanner-masterbox-retry') or self.path.startswith('/api/fix-scanner-timbangan-retry'):
             body = self.parse_json_body()
             params = self.parse_query_params()
             path_clean = self.path.split('?')[0].rstrip('/')
             path_code = None
-            for prefix in ['/reprint-masterbox/', '/api/fix-scanner-timbangan-retry/']:
+            for prefix in ['/reprint-masterbox/', '/api/fix-scanner-masterbox-retry/', '/api/fix-scanner-timbangan-retry/']:
                 if path_clean.startswith(prefix):
                     path_code = path_clean.replace(prefix, '').strip()
                     break
