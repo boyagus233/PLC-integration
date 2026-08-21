@@ -557,11 +557,15 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             path_code = path_clean.replace('/reprint-masterbox/', '').strip() if path_clean.startswith('/reprint-masterbox/') else None
             pack_code = path_code or params.get('pack_code') or params.get('packCode') or params.get('code')
             if self.app_instance:
-                self.app_instance.after(0, self.app_instance.reprint_masterbox, pack_code)
-                msg = f"Master Box reprint triggered successfully ({pack_code if pack_code else 'latest'})"
-                self.send_response_json({"status": "success", "message": msg, "pack_code": pack_code})
+                success, msg, http_code = self.app_instance.reprint_masterbox(pack_code)
+                self.send_response_json({
+                    "status": "success" if success else "error",
+                    "success": success,
+                    "message": msg,
+                    "pack_code": pack_code
+                }, status_code=http_code)
             else:
-                self.send_response_json({"status": "error", "message": "App instance not ready"}, 500)
+                self.send_response_json({"status": "error", "success": False, "message": "App instance not ready"}, 500)
         elif self.path == '/test-print-pallet':
             self.handle_test_print(False)
         elif self.path == '/test-print-masterbox':
@@ -589,11 +593,15 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             path_code = path_clean.replace('/reprint-masterbox/', '').strip() if path_clean.startswith('/reprint-masterbox/') else None
             pack_code = path_code or body.get('pack_code') or body.get('packCode') or body.get('code') or params.get('pack_code') or params.get('packCode') or params.get('code')
             if self.app_instance:
-                self.app_instance.after(0, self.app_instance.reprint_masterbox, pack_code)
-                msg = f"Master Box reprint triggered successfully ({pack_code if pack_code else 'latest'})"
-                self.send_response_json({"status": "success", "message": msg, "pack_code": pack_code})
+                success, msg, http_code = self.app_instance.reprint_masterbox(pack_code)
+                self.send_response_json({
+                    "status": "success" if success else "error",
+                    "success": success,
+                    "message": msg,
+                    "pack_code": pack_code
+                }, status_code=http_code)
             else:
-                self.send_response_json({"status": "error", "message": "App instance not ready"}, 500)
+                self.send_response_json({"status": "error", "success": False, "message": "App instance not ready"}, 500)
         elif self.path == '/test-print-pallet':
             self.handle_test_print(False)
         elif self.path == '/test-print-masterbox':
@@ -1909,7 +1917,8 @@ PRINT 2
                     logging.warning(f"[MASTERBOX] Reprint ditolak backend: {err_msg}")
                     self.after(0, self.add_history, f"MASTERBOX REPRINT GAGAL -> {err_msg}")
                     self.after(0, self.set_printer_status, "REPRINT GAGAL", "#ef4444", "Data tidak ditemukan")
-                    return
+                    self.after(3000, lambda: self.reset_printer_visual_state())
+                    return False, err_msg, 404
 
                 metadata = data.get("metaData", {}) if isinstance(data, dict) else {}
                 code = data.get("code", "MOCK.MB.CODE.ERROR") if isinstance(data, dict) else "MOCK.MB.CODE.ERROR"
@@ -1976,17 +1985,26 @@ PRINT 2
                     code_finishing=code_finishing
                 )
                 self.after(2000, lambda: self.reset_printer_visual_state())
+                return True, f"Master Box reprint succeeded. QR: {code}", 200
             else:
                 res_body = response.text.strip()
+                err_msg = res_body
+                try:
+                    err_json = response.json()
+                    err_msg = err_json.get("message") or res_body
+                except: pass
                 logging.error(f"[MASTERBOX] API Reprint Gagal ({response.status_code}). Respon: {res_body}")
-                self.after(0, self.add_history, f"MB REPRINT API ERROR ({response.status_code}) -> {res_body[:60]}")
+                self.after(0, self.add_history, f"MB REPRINT API ERROR ({response.status_code}) -> {err_msg[:60]}")
                 self.after(0, self.set_printer_status, "REPRINT GAGAL (API)", "#ef4444", f"Status: {response.status_code}")
                 self.after(3000, lambda: self.reset_printer_visual_state())
+                return False, err_msg, response.status_code
         except Exception as e:
-            logging.error(f"[MASTERBOX] Error Reprint Master Box: {e}")
+            err_msg = f"Error Jaringan ke API Server: {e}"
+            logging.error(f"[MASTERBOX] {err_msg}")
             self.after(0, self.add_history, "[MASTERBOX] Jaringan API Reprint Gagal.")
             self.after(0, self.set_printer_status, "REPRINT GAGAL (NET)", "#ef4444", "Net Error")
             self.after(3000, lambda: self.reset_printer_visual_state())
+            return False, err_msg, 500
 
     # --- WATCHER LOOP REALTIME (logs/ folder) ---
     def watcher_loop(self):
