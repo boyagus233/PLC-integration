@@ -1757,13 +1757,16 @@ PRINT 2
                     win32print.EndPagePrinter(hPrinter)
                     logging.info(f"[MASTERBOX] Sukses mencetak Master Box QR: {code}")
                     self.after(0, self.add_history, f"MASTERBOX -> Sukses mencetak QR: {code}")
+                    return True, "Sukses mencetak"
                 finally:
                     win32print.EndDocPrinter(hPrinter)
             finally:
                 win32print.ClosePrinter(hPrinter)
         except Exception as e:
-            logging.error(f"[MASTERBOX] Gagal cetak ke {PRINTER_NAME}: {e}")
+            err_msg = f"Gagal cetak ke printer {PRINTER_NAME}: {e}"
+            logging.error(f"[MASTERBOX] {err_msg}")
             self.after(0, self.add_history, f"MASTERBOX ERROR -> Gagal cetak stiker Master Box.")
+            return False, err_msg
 
     def send_masterbox_api_and_print(self, payload, file_path):
         """Mengirim data hasil penimbangan ke API Master Box lalu mencetak stiker secara otomatis"""
@@ -1973,7 +1976,7 @@ PRINT 2
                 self.after(0, self.add_history, f"MASTERBOX REPRINT -> Sukses. QR: {code}")
                 
                 # Print Masterbox
-                self.execute_physical_print_masterbox(
+                print_ok, print_err = self.execute_physical_print_masterbox(
                     code=code,
                     part_code=part_code,
                     batt_type=batt_type,
@@ -1985,6 +1988,9 @@ PRINT 2
                     code_finishing=code_finishing
                 )
                 self.after(2000, lambda: self.reset_printer_visual_state())
+                if not print_ok:
+                    self.after(0, self.set_printer_status, "PRINTER ERROR", "#ef4444", print_err[:30])
+                    return False, print_err, 500
                 return True, f"Master Box reprint succeeded. QR: {code}", 200
             else:
                 res_body = response.text.strip()
