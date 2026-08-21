@@ -532,6 +532,12 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             self.handle_print_request(False)
         elif self.path == '/reprint-pallet':
             self.handle_print_request(True)
+        elif self.path == '/reprint-masterbox':
+            if self.app_instance:
+                self.app_instance.after(0, self.app_instance.reprint_masterbox)
+                self.send_response_json({"status": "success", "message": "Master Box reprint triggered successfully"})
+            else:
+                self.send_response_json({"status": "error", "message": "App instance not ready"}, 500)
         elif self.path == '/test-print-pallet':
             self.handle_test_print(False)
         elif self.path == '/test-print-masterbox':
@@ -552,6 +558,12 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             self.handle_print_request(False)
         elif self.path == '/reprint-pallet':
             self.handle_print_request(True)
+        elif self.path == '/reprint-masterbox':
+            if self.app_instance:
+                self.app_instance.after(0, self.app_instance.reprint_masterbox)
+                self.send_response_json({"status": "success", "message": "Master Box reprint triggered successfully"})
+            else:
+                self.send_response_json({"status": "error", "message": "App instance not ready"}, 500)
         elif self.path == '/test-print-pallet':
             self.handle_test_print(False)
         elif self.path == '/test-print-masterbox':
