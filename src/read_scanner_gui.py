@@ -494,6 +494,25 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         logging.info(f"[HTTP-SERVER] {format%args}")
 
+    def parse_json_body(self):
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length > 0:
+                body_bytes = self.rfile.read(content_length)
+                return json.loads(body_bytes.decode('utf-8'))
+        except Exception as e:
+            logging.error(f"[HTTP-SERVER] Error parsing JSON body: {e}")
+        return {}
+
+    def parse_query_params(self):
+        try:
+            from urllib.parse import urlparse, parse_qs
+            query = urlparse(self.path).query
+            params = parse_qs(query)
+            return {k: v[0] for k, v in params.items() if v}
+        except Exception:
+            return {}
+
     def handle_print_request(self, is_retry):
         if self.app_instance:
             self.app_instance.after(0, self.app_instance.hit_api_pallet_and_print, is_retry)
@@ -532,10 +551,13 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             self.handle_print_request(False)
         elif self.path == '/reprint-pallet':
             self.handle_print_request(True)
-        elif self.path == '/reprint-masterbox':
+        elif self.path.startswith('/reprint-masterbox'):
+            params = self.parse_query_params()
+            pack_code = params.get('pack_code') or params.get('packCode') or params.get('code')
             if self.app_instance:
-                self.app_instance.after(0, self.app_instance.reprint_masterbox)
-                self.send_response_json({"status": "success", "message": "Master Box reprint triggered successfully"})
+                self.app_instance.after(0, self.app_instance.reprint_masterbox, pack_code)
+                msg = f"Master Box reprint triggered successfully ({pack_code if pack_code else 'latest'})"
+                self.send_response_json({"status": "success", "message": msg, "pack_code": pack_code})
             else:
                 self.send_response_json({"status": "error", "message": "App instance not ready"}, 500)
         elif self.path == '/test-print-pallet':
@@ -558,10 +580,14 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             self.handle_print_request(False)
         elif self.path == '/reprint-pallet':
             self.handle_print_request(True)
-        elif self.path == '/reprint-masterbox':
+        elif self.path.startswith('/reprint-masterbox'):
+            body = self.parse_json_body()
+            params = self.parse_query_params()
+            pack_code = body.get('pack_code') or body.get('packCode') or body.get('code') or params.get('pack_code') or params.get('packCode') or params.get('code')
             if self.app_instance:
-                self.app_instance.after(0, self.app_instance.reprint_masterbox)
-                self.send_response_json({"status": "success", "message": "Master Box reprint triggered successfully"})
+                self.app_instance.after(0, self.app_instance.reprint_masterbox, pack_code)
+                msg = f"Master Box reprint triggered successfully ({pack_code if pack_code else 'latest'})"
+                self.send_response_json({"status": "success", "message": msg, "pack_code": pack_code})
             else:
                 self.send_response_json({"status": "error", "message": "App instance not ready"}, 500)
         elif self.path == '/test-print-pallet':
@@ -1856,17 +1882,22 @@ PRINT 2
         except Exception as e_move:
             logging.error(f"[MASTERBOX] Gagal memindahkan file log: {e_move}")
 
-    def reprint_masterbox(self):
-        """Memanggil API Masterbox-retry untuk reprint Master Box terakhir"""
+    def reprint_masterbox(self, pack_code=None):
+        """Memanggil API Masterbox-retry untuk reprint Master Box (spesifik pack_code jika diberikan, atau terakhir)"""
         if not PRINTER_ENABLE:
             return
-        self.after(0, self.set_printer_status, "REPRINT MB: PROSES...", "#3b82f6", "Meminta data retry...")
-        payload = {"line_no": str(TIMBANGAN_LINE_NO)}
+        status_info = f"QR: {pack_code}" if pack_code else "Meminta data retry..."
+        self.after(0, self.set_printer_status, "REPRINT MB: PROSES...", "#3b82f6", status_info)
         
-        logging.info(f"[MASTERBOX] Mengirim POST request reprint ke {TIMBANGAN_RETRY_API_URL}")
+        payload = {"line_no": str(TIMBANGAN_LINE_NO)}
+        if pack_code:
+            payload["pack_code"] = str(pack_code).strip()
+            
+        logging.info(f"[MASTERBOX] Mengirim POST request reprint ke {TIMBANGAN_RETRY_API_URL} | Payload: {payload}")
         try:
             start_time = time.time()
-            response = requests.post(TIMBANGAN_RETRY_API_URL, json=payload, timeout=8, verify=False)
+            headers = {'Content-Type': 'application/json'}
+            response = requests.post(TIMBANGAN_RETRY_API_URL, json=payload, headers=headers, timeout=8, verify=False)
             duration = time.time() - start_time
             
             if response.status_code == 200:
