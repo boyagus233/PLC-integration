@@ -1903,9 +1903,16 @@ PRINT 2
             
             if response.status_code == 200:
                 res_data = response.json()
-                data = res_data.get("data", {})
-                metadata = data.get("metaData", {})
-                code = data.get("code", "MOCK.MB.CODE.ERROR")
+                data = res_data.get("data")
+                if res_data.get("status") is False or not data:
+                    err_msg = res_data.get("message") or "Data Masterbox tidak ditemukan di database backend"
+                    logging.warning(f"[MASTERBOX] Reprint ditolak backend: {err_msg}")
+                    self.after(0, self.add_history, f"MASTERBOX REPRINT GAGAL -> {err_msg}")
+                    self.after(0, self.set_printer_status, "REPRINT GAGAL", "#ef4444", "Data tidak ditemukan")
+                    return
+
+                metadata = data.get("metaData", {}) if isinstance(data, dict) else {}
+                code = data.get("code", "MOCK.MB.CODE.ERROR") if isinstance(data, dict) else "MOCK.MB.CODE.ERROR"
                 
                 # 1. Part Code & TYPE (TYPE wajib dari metadata.part_code)
                 part_code = res_data.get("partCode") or data.get("partCode") or res_data.get("part_code") or "-"
