@@ -513,15 +513,17 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
         except Exception:
             return {}
 
-    def handle_print_request(self, is_retry):
+    def handle_print_request(self, is_retry, pack_code=None):
         if self.app_instance:
-            self.app_instance.after(0, self.app_instance.hit_api_pallet_and_print, is_retry)
+            success, msg, http_code = self.app_instance.hit_api_pallet_and_print(is_retry=(is_retry or pack_code is not None), pack_code=pack_code)
             self.send_response_json({
-                "status": "success", 
-                "message": f"Pallet {'reprint' if is_retry else 'print'} triggered successfully"
-            })
+                "status": "success" if success else "error",
+                "success": success,
+                "message": msg,
+                "pack_code": pack_code
+            }, status_code=http_code)
         else:
-            self.send_response_json({"status": "error", "message": "App instance not ready"}, 500)
+            self.send_response_json({"status": "error", "success": False, "message": "App instance not ready"}, 500)
 
     def handle_test_print(self, is_masterbox):
         if self.app_instance:
@@ -547,10 +549,17 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             self.send_response_json({"status": "error", "message": "App instance not ready"}, 500)
 
     def do_GET(self):
-        if self.path == '/print-pallet':
-            self.handle_print_request(False)
-        elif self.path == '/reprint-pallet':
-            self.handle_print_request(True)
+        if self.path.startswith('/print-pallet') or self.path.startswith('/reprint-pallet'):
+            params = self.parse_query_params()
+            path_clean = self.path.split('?')[0].rstrip('/')
+            path_code = None
+            if path_clean.startswith('/print-pallet/'):
+                path_code = path_clean.replace('/print-pallet/', '').strip()
+            elif path_clean.startswith('/reprint-pallet/'):
+                path_code = path_clean.replace('/reprint-pallet/', '').strip()
+            pack_code = path_code or params.get('pack_code') or params.get('packCode') or params.get('code')
+            is_retry = self.path.startswith('/reprint-pallet') or (pack_code is not None)
+            self.handle_print_request(is_retry, pack_code=pack_code)
         elif self.path.startswith('/reprint-masterbox'):
             params = self.parse_query_params()
             path_clean = self.path.split('?')[0].rstrip('/')
@@ -582,10 +591,18 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             self.send_response_json({"status": "error", "message": "Endpoint not found"}, 404)
 
     def do_POST(self):
-        if self.path == '/print-pallet':
-            self.handle_print_request(False)
-        elif self.path == '/reprint-pallet':
-            self.handle_print_request(True)
+        if self.path.startswith('/print-pallet') or self.path.startswith('/reprint-pallet'):
+            body = self.parse_json_body()
+            params = self.parse_query_params()
+            path_clean = self.path.split('?')[0].rstrip('/')
+            path_code = None
+            if path_clean.startswith('/print-pallet/'):
+                path_code = path_clean.replace('/print-pallet/', '').strip()
+            elif path_clean.startswith('/reprint-pallet/'):
+                path_code = path_clean.replace('/reprint-pallet/', '').strip()
+            pack_code = path_code or body.get('pack_code') or body.get('packCode') or body.get('code') or params.get('pack_code') or params.get('packCode') or params.get('code')
+            is_retry = self.path.startswith('/reprint-pallet') or (pack_code is not None)
+            self.handle_print_request(is_retry, pack_code=pack_code)
         elif self.path.startswith('/reprint-masterbox'):
             body = self.parse_json_body()
             params = self.parse_query_params()
@@ -1327,27 +1344,40 @@ class ScannerApp(tk.Tk):
             self.after(0, self.add_history, f"PLC JARINGAN ERROR -> Gagal Kirim status {symbol_name}")
 
     # --- AUTOMATIC PRINTER TOMBOL LOGIC (win32print + TSPL) ---
-    def hit_api_pallet_and_print(self, is_retry=False):
-        """Memanggil API Pallet (atau retry jika is_retry=True), lalu mencetaknya jika data diperoleh"""
-        url = PRINTER_RETRY_API_URL if is_retry else PRINTER_API_URL
-        api_label = "REPRINT" if is_retry else "CETAK"
+    def hit_api_pallet_and_print(self, is_retry=False, pack_code=None):
+        """Memanggil API Pallet (atau retry jika is_retry=True atau pack_code ada), lalu mencetaknya jika data diperoleh"""
+        url = PRINTER_RETRY_API_URL if (is_retry or pack_code) else PRINTER_API_URL
+        api_label = "REPRINT/TARGET" if (is_retry or pack_code) else "CETAK"
         
-        self.after(0, self.set_printer_status, f"{api_label}: AMBIL DATA...", "#3b82f6", "Meminta pallet ID...")
+        status_info = f"QR: {pack_code}" if pack_code else "Meminta pallet ID..."
+        self.after(0, self.set_printer_status, f"{api_label}: AMBIL DATA...", "#3b82f6", status_info)
+        
         payload = {"line_no": str(PRINTER_API_LINE_NO)}
-        
-        logging.info(f"[PRINTER] Mengirim POST request ({api_label}) untuk Line {PRINTER_API_LINE_NO} ke {url}")
+        if pack_code:
+            payload["pack_code"] = str(pack_code).strip()
+            
+        logging.info(f"[PRINTER] Mengirim POST request ({api_label}) ke {url} | Payload: {payload}")
         
         try:
             start_time = time.time()
-            response = requests.post(url, json=payload, timeout=8, verify=False)
+            headers = {"Content-Type": "application/json"}
+            response = requests.post(url, json=payload, headers=headers, timeout=8, verify=False)
             duration = time.time() - start_time
             
             if response.status_code == 200:
                 res_data = response.json()
-                data = res_data.get("data", {})
-                metadata = data.get("metaData", {})
+                data = res_data.get("data")
+                if res_data.get("status") is False or not data:
+                    err_msg = res_data.get("message") or "Data Pallet tidak ditemukan di database backend"
+                    logging.warning(f"[PRINTER] Cetak Pallet ditolak backend: {err_msg}")
+                    self.after(0, self.add_history, f"PALLET PRINT GAGAL -> {err_msg}")
+                    self.after(0, self.set_printer_status, "CETAK GAGAL", "#ef4444", "Data tidak ditemukan")
+                    self.after(3000, lambda: self.reset_printer_visual_state())
+                    return False, err_msg, 404
+
+                metadata = data.get("metaData", {}) if isinstance(data, dict) else {}
                 
-                created_at_raw = data.get("createdAt", "")
+                created_at_raw = data.get("createdAt", "") if isinstance(data, dict) else ""
                 try:
                     dt_part = created_at_raw.split(".")[0]
                     dt = datetime.strptime(dt_part, "%Y-%m-%dT%H:%M:%S")
@@ -1363,7 +1393,7 @@ class ScannerApp(tk.Tk):
                 )
                 part_code = raw_part_code.split(" ")[0] if raw_part_code != "-" else "-"
 
-                batt_type = (
+                raw_batt_type = (
                     metadata.get("part_code") or 
                     res_data.get("partName") or 
                     res_data.get("part_name") or 
@@ -1371,6 +1401,8 @@ class ScannerApp(tk.Tk):
                     data.get("partName") or 
                     "-"
                 )
+                import re
+                batt_type = re.sub(r'\s*\([A-Z_]+\)\s*$', '', str(raw_batt_type)).strip()
                     
                 customer = (
                     metadata.get("customer") or 
@@ -1445,7 +1477,7 @@ class ScannerApp(tk.Tk):
                 )
                 
                 parsed_data = {
-                    "code": data.get("code", "-"),
+                    "code": data.get("code", "-") if isinstance(data, dict) else "-",
                     "part_code": part_code,
                     "batt_type": batt_type,
                     "quantity": quantity_formatted,
@@ -1461,19 +1493,32 @@ class ScannerApp(tk.Tk):
                 self.after(0, self.add_history, f"PRINTER API -> Sukses memuat Pallet: {parsed_data['code']}")
                 
                 # Pemicu cetak fisik
-                self.execute_physical_print(parsed_data)
+                print_ok, print_err = self.execute_physical_print(parsed_data)
+                if not print_ok:
+                    self.after(0, self.set_printer_status, "PRINTER ERROR", "#ef4444", print_err[:30])
+                    return False, print_err, 500
+                return True, f"Pallet print succeeded. QR: {parsed_data['code']}", 200
                 
             else:
-                logging.error(f"[PRINTER] API Gagal ({response.status_code}). Respon: {response.text.strip()}")
-                self.after(0, self.add_history, f"PRINTER API ERROR ({response.status_code}) -> Gagal ambil data.")
-                self.after(0, self.set_printer_status, "CETAK GAGAL (API ERROR)", "#ef4444", "Respons API salah")
+                res_body = response.text.strip()
+                err_msg = res_body
+                try:
+                    err_json = response.json()
+                    err_msg = err_json.get("message") or res_body
+                except: pass
+                logging.error(f"[PRINTER] API Gagal ({response.status_code}). Respon: {res_body}")
+                self.after(0, self.add_history, f"PRINTER API ERROR ({response.status_code}) -> {err_msg[:60]}")
+                self.after(0, self.set_printer_status, "CETAK GAGAL (API ERROR)", "#ef4444", f"Status: {response.status_code}")
                 self.after(3000, lambda: self.reset_printer_visual_state())
+                return False, err_msg, response.status_code
                 
         except Exception as e:
-            logging.error(f"[PRINTER] Error Hit API Pallet: {e}")
+            err_msg = f"Error Hit API Pallet: {e}"
+            logging.error(f"[PRINTER] {err_msg}")
             self.after(0, self.add_history, f"PRINTER JARINGAN ERROR -> Gagal hit API Pallet.")
             self.after(0, self.set_printer_status, "CETAK GAGAL (NET ERROR)", "#ef4444", "Masalah Jaringan")
             self.after(3000, lambda: self.reset_printer_visual_state())
+            return False, err_msg, 500
 
     def execute_physical_print(self, data_dict):
         """Kirim perintah TSPL raw ke printer TSC"""
@@ -1610,6 +1655,7 @@ PRINT 1
                     win32print.EndPagePrinter(hPrinter)
                     logging.info(f"[PRINTER] Sukses mencetak label QR Pallet: {code}")
                     self.after(0, self.add_history, f"PRINTER -> Sukses mencetak QR: {code}")
+                    return True, "Sukses mencetak"
                 finally:
                     win32print.EndDocPrinter(hPrinter)
             finally:
@@ -1619,10 +1665,12 @@ PRINT 1
             self.after(2000, lambda: self.reset_printer_visual_state())
             
         except Exception as e:
-            logging.error(f"[PRINTER] Gagal cetak ke {PRINTER_NAME}: {e}")
+            err_msg = f"Gagal cetak ke {PRINTER_NAME}: {e}"
+            logging.error(f"[PRINTER] {err_msg}")
             self.after(0, self.add_history, f"PRINTER ERROR -> Gagal cetak ke printer.")
             self.after(0, self.set_printer_status, "CETAK ERROR (SYS)", "#ef4444", str(e)[:30])
             self.after(3000, lambda: self.reset_printer_visual_state())
+            return False, err_msg
 
     def reset_printer_visual_state(self):
         if not self.running:
