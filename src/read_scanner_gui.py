@@ -698,10 +698,9 @@ class ScannerApp(tk.Tk):
             self.battery_counter_thread = threading.Thread(target=self.battery_counter_loop, daemon=True)
             self.battery_counter_thread.start()
             
-        # Start HTTP Server for Handheld/Mobile Printing
-        if PRINTER_ENABLE:
-            self.http_thread = threading.Thread(target=self.start_http_server, daemon=True)
-            self.http_thread.start()
+        # Start HTTP Server for Handheld/Mobile Printing (Selalu aktif untuk melayani API Handheld/Web)
+        self.http_thread = threading.Thread(target=self.start_http_server, daemon=True)
+        self.http_thread.start()
                 
         # Start Watchdog Monitor Thread (Jalankan selalu agar simulasi via GUI tetap berfungsi)
         if not WATCHDOG_AVAILABLE:
@@ -1884,8 +1883,6 @@ PRINT 2
 
     def reprint_masterbox(self, pack_code=None):
         """Memanggil API Masterbox-retry untuk reprint Master Box (spesifik pack_code jika diberikan, atau terakhir)"""
-        if not PRINTER_ENABLE:
-            return
         status_info = f"QR: {pack_code}" if pack_code else "Meminta data retry..."
         self.after(0, self.set_printer_status, "REPRINT MB: PROSES...", "#3b82f6", status_info)
         
