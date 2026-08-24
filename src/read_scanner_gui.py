@@ -1145,7 +1145,7 @@ class ScannerApp(tk.Tk):
         
         try:
             start_time = time.time()
-            headers = {'Content-Type': 'application/json'}
+            headers = {'Content-Type': 'application/json', 'X-Scanner-Api-Key': 'Yu4saB4tterYindonesi4'}
             response = requests.post(url, json=payload, headers=headers, timeout=10, verify=False)
             duration = time.time() - start_time
             res_body = response.text.strip()
@@ -1247,7 +1247,7 @@ class ScannerApp(tk.Tk):
         
         try:
             start_time = time.time()
-            headers = {'Content-Type': 'application/json'}
+            headers = {'Content-Type': 'application/json', 'X-Scanner-Api-Key': 'Yu4saB4tterYindonesi4'}
             response = requests.post(url, json=payload, headers=headers, timeout=10, verify=False)
             duration = time.time() - start_time
             res_body = response.text.strip()
@@ -1344,7 +1344,7 @@ class ScannerApp(tk.Tk):
         
         try:
             start_time = time.time()
-            headers = {"Content-Type": "application/json"}
+            headers = {"Content-Type": "application/json", "X-Scanner-Api-Key": "Yu4saB4tterYindonesi4"}
             response = requests.post(DOWNTIME_API_URL, json=payload, headers=headers, timeout=5, verify=False)
             duration = time.time() - start_time
             res_body = response.text.strip()
@@ -1376,7 +1376,7 @@ class ScannerApp(tk.Tk):
         
         try:
             start_time = time.time()
-            headers = {"Content-Type": "application/json"}
+            headers = {"Content-Type": "application/json", "X-Scanner-Api-Key": "Yu4saB4tterYindonesi4"}
             response = requests.post(url, json=payload, headers=headers, timeout=8, verify=False)
             duration = time.time() - start_time
             
@@ -1895,7 +1895,7 @@ PRINT 2
         success = False
         try:
             start_time = time.time()
-            headers = {'Content-Type': 'application/json'}
+            headers = {'Content-Type': 'application/json', 'X-Scanner-Api-Key': 'Yu4saB4tterYindonesi4'}
             
             # Bersihkan part_code dari null bytes dan suffix tipe data sebelum kirim
             if 'part_code' in payload:
@@ -2022,7 +2022,7 @@ PRINT 2
         logging.info(f"[MASTERBOX] Mengirim POST request reprint ke {TIMBANGAN_RETRY_API_URL} | Payload: {payload}")
         try:
             start_time = time.time()
-            headers = {'Content-Type': 'application/json'}
+            headers = {'Content-Type': 'application/json', 'X-Scanner-Api-Key': 'Yu4saB4tterYindonesi4'}
             response = requests.post(TIMBANGAN_RETRY_API_URL, json=payload, headers=headers, timeout=8, verify=False)
             duration = time.time() - start_time
             
@@ -3095,7 +3095,7 @@ PRINT 2
     def send_battery_counter_api(self, payload):
         """Mengirim data counter baterai realtime ke Backend API"""
         try:
-            headers = {'Content-Type': 'application/json'}
+            headers = {'Content-Type': 'application/json', 'X-Scanner-Api-Key': 'Yu4saB4tterYindonesi4'}
             logging.info(f"[BATTERY_COUNTER] Kirim data counter ke {BATTERY_COUNTER_API_URL}: {payload}")
             response = requests.post(BATTERY_COUNTER_API_URL, json=payload, headers=headers, timeout=5, verify=False)
             if response.status_code in [200, 201]:
