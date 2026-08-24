@@ -513,9 +513,9 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
         except Exception:
             return {}
 
-    def handle_print_request(self, is_retry, pack_code=None):
+    def handle_print_request(self, is_retry, pack_code=None, line_no=None):
         if self.app_instance:
-            success, msg, http_code = self.app_instance.hit_api_pallet_and_print(is_retry=(is_retry or pack_code is not None), pack_code=pack_code)
+            success, msg, http_code = self.app_instance.hit_api_pallet_and_print(is_retry=(is_retry or pack_code is not None), pack_code=pack_code, line_no=line_no)
             self.send_response_json({
                 "status": "success" if success else "error",
                 "success": success,
@@ -528,20 +528,20 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
     def handle_test_print(self, is_masterbox):
         if self.app_instance:
             if is_masterbox:
-                # Trigger Master Box test print
-                self.app_instance.after(0, self.app_instance.execute_physical_print_masterbox, 
-                                          "YBID.MB.250908.08.000001", "M221SDCAC20", "B.CH-YTZ5S (Wet-CF) YU-5", "15.44", "10", "25-Sep-2025", "260728100001")
-                self.send_response_json({"status": "success", "message": "Test print Master Box triggered"})
+                self.app_instance.after(0, self.app_instance.execute_physical_print_masterbox, "MOCK.MB.TEST", "MOCK.PART", "MOCK.TYPE", "15.44", "10", "21-Aug-2026/I/14")
+                self.send_response_json({"status": "success", "message": "Test print Masterbox triggered"})
             else:
-                # Trigger Pallet test print
                 mock_data = {
-                    "code": "YBID.PLT.250908.000001",
-                    "part_code": "M221SDCAC20",
-                    "batt_type": "B.CH-YTZ5S (Wet-CF) YU-5",
-                    "quantity": "64 Masterbox / 640 Pcs",
-                    "date_str": "25-Sep-2025",
+                    "code": "MOCK.PLT.TEST",
+                    "part_code": "MOCK.PART",
+                    "batt_type": "MOCK.TYPE",
+                    "quantity": "10 pcs - 1 pkgs",
+                    "date_str": "21-Aug-2026",
                     "customer": "AFM (PT. SANTI YOGA)",
-                    "order_no": "11500007"
+                    "order_no": "MOCK.ORDER",
+                    "prd_shift": "21-Aug-2026/I/14",
+                    "code_production": "MOCK.PROD",
+                    "code_production_qty": "10"
                 }
                 self.app_instance.after(0, self.app_instance.execute_physical_print, mock_data)
                 self.send_response_json({"status": "success", "message": "Test print Pallet triggered"})
@@ -560,8 +560,9 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             pack_code = path_code or params.get('pack_code') or params.get('packCode') or params.get('code')
             if pack_code:
                 pack_code = str(pack_code).strip('() ').strip()
+            line_no = params.get('line_no') or params.get('lineNo') or params.get('line')
             is_retry = self.path.startswith('/reprint-pallet') or self.path.startswith('/api/fix-scanner-pallet-retry') or (pack_code is not None)
-            self.handle_print_request(is_retry, pack_code=pack_code)
+            self.handle_print_request(is_retry, pack_code=pack_code, line_no=line_no)
         elif self.path.startswith('/reprint-masterbox') or self.path.startswith('/api/fix-scanner-masterbox-retry') or self.path.startswith('/api/fix-scanner-timbangan-retry'):
             params = self.parse_query_params()
             path_clean = self.path.split('?')[0].rstrip('/')
@@ -573,8 +574,9 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             pack_code = path_code or params.get('pack_code') or params.get('packCode') or params.get('code')
             if pack_code:
                 pack_code = str(pack_code).strip('() ').strip()
+            line_no = params.get('line_no') or params.get('lineNo') or params.get('line')
             if self.app_instance:
-                success, msg, http_code = self.app_instance.reprint_masterbox(pack_code)
+                success, msg, http_code = self.app_instance.reprint_masterbox(pack_code, line_no=line_no)
                 self.send_response_json({
                     "status": "success" if success else "error",
                     "success": success,
@@ -611,8 +613,9 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             pack_code = path_code or body.get('pack_code') or body.get('packCode') or body.get('code') or params.get('pack_code') or params.get('packCode') or params.get('code')
             if pack_code:
                 pack_code = str(pack_code).strip('() ').strip()
+            line_no = body.get('line_no') or body.get('lineNo') or body.get('line') or params.get('line_no') or params.get('lineNo') or params.get('line')
             is_retry = self.path.startswith('/reprint-pallet') or self.path.startswith('/api/fix-scanner-pallet-retry') or (pack_code is not None)
-            self.handle_print_request(is_retry, pack_code=pack_code)
+            self.handle_print_request(is_retry, pack_code=pack_code, line_no=line_no)
         elif self.path.startswith('/reprint-masterbox') or self.path.startswith('/api/fix-scanner-masterbox-retry') or self.path.startswith('/api/fix-scanner-timbangan-retry'):
             body = self.parse_json_body()
             params = self.parse_query_params()
@@ -625,8 +628,9 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             pack_code = path_code or body.get('pack_code') or body.get('packCode') or body.get('code') or params.get('pack_code') or params.get('packCode') or params.get('code')
             if pack_code:
                 pack_code = str(pack_code).strip('() ').strip()
+            line_no = body.get('line_no') or body.get('lineNo') or body.get('line') or params.get('line_no') or params.get('lineNo') or params.get('line')
             if self.app_instance:
-                success, msg, http_code = self.app_instance.reprint_masterbox(pack_code)
+                success, msg, http_code = self.app_instance.reprint_masterbox(pack_code, line_no=line_no)
                 self.send_response_json({
                     "status": "success" if success else "error",
                     "success": success,
@@ -1360,15 +1364,16 @@ class ScannerApp(tk.Tk):
             self.after(0, self.add_history, f"PLC JARINGAN ERROR -> Gagal Kirim status {symbol_name}")
 
     # --- AUTOMATIC PRINTER TOMBOL LOGIC (win32print + TSPL) ---
-    def hit_api_pallet_and_print(self, is_retry=False, pack_code=None):
+    def hit_api_pallet_and_print(self, is_retry=False, pack_code=None, line_no=None):
         """Memanggil API Pallet (atau retry jika is_retry=True atau pack_code ada), lalu mencetaknya jika data diperoleh"""
         url = PRINTER_RETRY_API_URL if (is_retry or pack_code) else PRINTER_API_URL
         api_label = "REPRINT/TARGET" if (is_retry or pack_code) else "CETAK"
         
+        target_line_no = str(line_no).strip() if line_no else str(PRINTER_API_LINE_NO)
         status_info = f"QR: {pack_code}" if pack_code else "Meminta pallet ID..."
         self.after(0, self.set_printer_status, f"{api_label}: AMBIL DATA...", "#3b82f6", status_info)
         
-        payload = {"line_no": str(PRINTER_API_LINE_NO)}
+        payload = {"line_no": target_line_no}
         if pack_code:
             payload["pack_code"] = str(pack_code).strip()
             
@@ -1379,6 +1384,28 @@ class ScannerApp(tk.Tk):
             headers = {"Content-Type": "application/json", "X-Scanner-Api-Key": "Yu4saB4tterYindonesi4"}
             response = requests.post(url, json=payload, headers=headers, timeout=8, verify=False)
             duration = time.time() - start_time
+            
+            res_data = response.json() if response.status_code in [200, 404] else {}
+            data = res_data.get("data") if isinstance(res_data, dict) else None
+
+            # Smart Line Fallback Search: Jika pack_code di-hit tapi line_no awal mengembalikan 404 / tidak ada, cari otomatis di line_no lain
+            if pack_code and (response.status_code == 404 or res_data.get("status") is False or not data):
+                logging.info(f"[PRINTER] Pack code {pack_code} tidak ditemukan di Line {target_line_no}. Mencari otomatis di Line lain...")
+                candidate_lines = [l for l in ['3', '1', '2', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '66'] if l != target_line_no]
+                for fb_line in candidate_lines:
+                    fb_payload = {"line_no": fb_line, "pack_code": str(pack_code).strip()}
+                    try:
+                        fb_res = requests.post(url, json=fb_payload, headers=headers, timeout=3, verify=False)
+                        if fb_res.status_code == 200:
+                            fb_json = fb_res.json()
+                            if fb_json.get("status") is not False and fb_json.get("data"):
+                                logging.info(f"[PRINTER] SMART FALLBACK SUCCESS! Data {pack_code} ditemukan di Line {fb_line}!")
+                                response = fb_res
+                                res_data = fb_json
+                                data = res_data.get("data")
+                                break
+                    except Exception as e_fb:
+                        continue
             
             if response.status_code == 200:
                 res_data = response.json()
@@ -2010,12 +2037,13 @@ PRINT 2
         except Exception as e_move:
             logging.error(f"[MASTERBOX] Gagal memindahkan file log: {e_move}")
 
-    def reprint_masterbox(self, pack_code=None):
+    def reprint_masterbox(self, pack_code=None, line_no=None):
         """Memanggil API Masterbox-retry untuk reprint Master Box (spesifik pack_code jika diberikan, atau terakhir)"""
+        target_line_no = str(line_no).strip() if line_no else str(TIMBANGAN_LINE_NO)
         status_info = f"QR: {pack_code}" if pack_code else "Meminta data retry..."
         self.after(0, self.set_printer_status, "REPRINT MB: PROSES...", "#3b82f6", status_info)
         
-        payload = {"line_no": str(TIMBANGAN_LINE_NO)}
+        payload = {"line_no": target_line_no}
         if pack_code:
             payload["pack_code"] = str(pack_code).strip()
             
@@ -2026,6 +2054,28 @@ PRINT 2
             response = requests.post(TIMBANGAN_RETRY_API_URL, json=payload, headers=headers, timeout=8, verify=False)
             duration = time.time() - start_time
             
+            res_data = response.json() if response.status_code in [200, 404] else {}
+            data = res_data.get("data") if isinstance(res_data, dict) else None
+
+            # Smart Line Fallback Search: Jika pack_code di-hit tapi line_no awal mengembalikan 404 / tidak ada, cari otomatis di line_no lain
+            if pack_code and (response.status_code == 404 or res_data.get("status") is False or not data):
+                logging.info(f"[MASTERBOX] Pack code {pack_code} tidak ditemukan di Line {target_line_no}. Mencari otomatis di Line lain...")
+                candidate_lines = [l for l in ['14', '3', '1', '2', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '15', '66'] if l != target_line_no]
+                for fb_line in candidate_lines:
+                    fb_payload = {"line_no": fb_line, "pack_code": str(pack_code).strip()}
+                    try:
+                        fb_res = requests.post(TIMBANGAN_RETRY_API_URL, json=fb_payload, headers=headers, timeout=3, verify=False)
+                        if fb_res.status_code == 200:
+                            fb_json = fb_res.json()
+                            if fb_json.get("status") is not False and fb_json.get("data"):
+                                logging.info(f"[MASTERBOX] SMART FALLBACK SUCCESS! Data {pack_code} ditemukan di Line {fb_line}!")
+                                response = fb_res
+                                res_data = fb_json
+                                data = res_data.get("data")
+                                break
+                    except Exception as e_fb:
+                        continue
+
             if response.status_code == 200:
                 res_data = response.json()
                 data = res_data.get("data")
