@@ -1385,28 +1385,6 @@ class ScannerApp(tk.Tk):
             response = requests.post(url, json=payload, headers=headers, timeout=8, verify=False)
             duration = time.time() - start_time
             
-            res_data = response.json() if response.status_code in [200, 404] else {}
-            data = res_data.get("data") if isinstance(res_data, dict) else None
-
-            # Smart Line Fallback Search: Jika pack_code di-hit tapi line_no awal mengembalikan 404 / tidak ada, cari otomatis di line_no lain
-            if pack_code and (response.status_code == 404 or res_data.get("status") is False or not data):
-                logging.info(f"[PRINTER] Pack code {pack_code} tidak ditemukan di Line {target_line_no}. Mencari otomatis di Line lain...")
-                candidate_lines = [l for l in ['3', '1', '2', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '66'] if l != target_line_no]
-                for fb_line in candidate_lines:
-                    fb_payload = {"line_no": fb_line, "pack_code": str(pack_code).strip()}
-                    try:
-                        fb_res = requests.post(url, json=fb_payload, headers=headers, timeout=3, verify=False)
-                        if fb_res.status_code == 200:
-                            fb_json = fb_res.json()
-                            if fb_json.get("status") is not False and fb_json.get("data"):
-                                logging.info(f"[PRINTER] SMART FALLBACK SUCCESS! Data {pack_code} ditemukan di Line {fb_line}!")
-                                response = fb_res
-                                res_data = fb_json
-                                data = res_data.get("data")
-                                break
-                    except Exception as e_fb:
-                        continue
-            
             if response.status_code == 200:
                 res_data = response.json()
                 data = res_data.get("data")
@@ -2054,28 +2032,6 @@ PRINT 2
             response = requests.post(TIMBANGAN_RETRY_API_URL, json=payload, headers=headers, timeout=8, verify=False)
             duration = time.time() - start_time
             
-            res_data = response.json() if response.status_code in [200, 404] else {}
-            data = res_data.get("data") if isinstance(res_data, dict) else None
-
-            # Smart Line Fallback Search: Jika pack_code di-hit tapi line_no awal mengembalikan 404 / tidak ada, cari otomatis di line_no lain
-            if pack_code and (response.status_code == 404 or res_data.get("status") is False or not data):
-                logging.info(f"[MASTERBOX] Pack code {pack_code} tidak ditemukan di Line {target_line_no}. Mencari otomatis di Line lain...")
-                candidate_lines = [l for l in ['14', '3', '1', '2', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '15', '66'] if l != target_line_no]
-                for fb_line in candidate_lines:
-                    fb_payload = {"line_no": fb_line, "pack_code": str(pack_code).strip()}
-                    try:
-                        fb_res = requests.post(TIMBANGAN_RETRY_API_URL, json=fb_payload, headers=headers, timeout=3, verify=False)
-                        if fb_res.status_code == 200:
-                            fb_json = fb_res.json()
-                            if fb_json.get("status") is not False and fb_json.get("data"):
-                                logging.info(f"[MASTERBOX] SMART FALLBACK SUCCESS! Data {pack_code} ditemukan di Line {fb_line}!")
-                                response = fb_res
-                                res_data = fb_json
-                                data = res_data.get("data")
-                                break
-                    except Exception as e_fb:
-                        continue
-
             if response.status_code == 200:
                 res_data = response.json()
                 data = res_data.get("data")
