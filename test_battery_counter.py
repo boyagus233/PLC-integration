@@ -7,7 +7,7 @@ from datetime import datetime
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Konfigurasi Target API
-API_URL = "https://api.pms.yuasa.seavihive.com/api/fix-scanner-counter-plc-gate"
+API_URL = "https://api.pms.yuasa.seavihive.com/api/fix-scanner-battery-counter"
 API_KEY = "Yu4saB4tterYindonesi4"
 LINE_NO = "13"
 TAG_NAME = "_IO_EM_DI_02"
