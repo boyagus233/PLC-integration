@@ -431,7 +431,7 @@ def load_config():
     bc_line_no = config.get("BATTERY_COUNTER_CONFIG", "LINE_NO", fallback="14").strip()
     bc_plc_ip = config.get("BATTERY_COUNTER_CONFIG", "PLC_IP", fallback="192.168.1.20/1").strip()
     bc_tag = config.get("BATTERY_COUNTER_CONFIG", "COUNTER_TAG", fallback="_IO_EM_DI_02").strip()
-    bc_url = resolve_url(config.get("BATTERY_COUNTER_CONFIG", "API_URL", fallback="/api/fix-scanner-battery-counter"))
+    bc_url = resolve_url(config.get("BATTERY_COUNTER_CONFIG", "API_URL", fallback="/api/fix-scanner-counter-plc-gate"))
     
     # Parse List Alamat Downtime
     dt_addresses = []
