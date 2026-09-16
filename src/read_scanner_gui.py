@@ -37,6 +37,8 @@ class MockStringVar:
 BaseApp = object if HEADLESS_MODE else tk.Tk
 import subprocess
 
+APP_VERSION = "1.0.0"
+
 try:
     import winsound
     WINSOUND_AVAILABLE = True
@@ -99,8 +101,9 @@ LOG_DIR_DOWNTIME  = os.path.join(LOG_DIR, "downtime")
 LOG_DIR_PRINTER   = os.path.join(LOG_DIR, "printer")
 LOG_DIR_TIMBANGAN = os.path.join(LOG_DIR, "timbangan")
 LOG_DIR_COUNTER   = os.path.join(LOG_DIR, "counter")
+LOG_DIR_UPDATE    = os.path.join(LOG_DIR, "update")
 
-for d in [LOG_DIR_SCANNER, LOG_DIR_DOWNTIME, LOG_DIR_PRINTER, LOG_DIR_TIMBANGAN, LOG_DIR_COUNTER]:
+for d in [LOG_DIR_SCANNER, LOG_DIR_DOWNTIME, LOG_DIR_PRINTER, LOG_DIR_TIMBANGAN, LOG_DIR_COUNTER, LOG_DIR_UPDATE]:
     os.makedirs(d, exist_ok=True)
 
 # Subfolders untuk Masterbox Watcher (di dalam logs/timbangan/)
@@ -463,6 +466,13 @@ def load_config():
     jop_url = resolve_url(config.get("CHANGE_JOP_CONFIG", "API_URL", fallback="/api/fix-scanner-change-jop"))
     jop_pack_code = config.get("CHANGE_JOP_CONFIG", "PACK_CODE", fallback="button_pressed").strip()
     
+    # Ambil nilai Auto-Updater Config
+    update_enable = config.getboolean("AUTO_UPDATE_CONFIG", "ENABLE", fallback=False)
+    update_url = resolve_url(config.get("AUTO_UPDATE_CONFIG", "API_URL", fallback="http://202.169.54.123:85/api/scanner-app-version")).strip()
+    update_time = config.get("AUTO_UPDATE_CONFIG", "CHECK_TIME", fallback="00:00").strip()
+    update_interval = config.getint("AUTO_UPDATE_CONFIG", "CHECK_INTERVAL_SECONDS", fallback=300)
+    update_version = config.get("AUTO_UPDATE_CONFIG", "CURRENT_VERSION", fallback=APP_VERSION).strip()
+
     # Parse List Alamat Downtime
     dt_addresses = []
     if dt_addresses_raw:
@@ -495,7 +505,8 @@ def load_config():
             tb_enable, tb_line, tb_url, tb_retry_url, tb_width, tb_height, tb_gap, tb_orientation,
             tb_conn_mode, tb_plc_ip, tb_plc_port, tb_plc_baud, tb_trigger_mode, tb_tag_weight, tb_tag_qty, tb_tag_type, tb_tag_totalizer, tb_tag_sensor, tb_tag_code_prod1, tb_tag_code_prod2, tb_tag_code_fns,
             bc_enable, bc_line_no, bc_plc_ip, bc_tag, bc_url,
-            jop_enable, jop_line_no, jop_plc_ip, jop_tag, jop_url, jop_pack_code)
+            jop_enable, jop_line_no, jop_plc_ip, jop_tag, jop_url, jop_pack_code,
+            update_enable, update_url, update_time, update_interval, update_version)
 
 (SCANNER_ENABLE, LINE_NO, PORT_SCANNER, BAUD_RATE, API_URL, SCANNER_REMOVE_API_URL, SCANNER_REMOVE_ADDR,
  SCANNER2_ENABLE, LINE_NO2, PORT_SCANNER2, BAUD_RATE2, API_URL2, SCANNER2_REMOVE_API_URL, SCANNER2_REMOVE_ADDR,
@@ -507,7 +518,8 @@ def load_config():
  TIMBANGAN_CONN_MODE, TIMBANGAN_PLC_IP, TIMBANGAN_PLC_PORT, TIMBANGAN_PLC_BAUD, TIMBANGAN_TRIGGER_MODE,
  TIMBANGAN_TAG_WEIGHT, TIMBANGAN_TAG_QTY, TIMBANGAN_TAG_TYPE, TIMBANGAN_TAG_TOTALIZER, TIMBANGAN_TAG_SENSOR, TIMBANGAN_TAG_CODE_PROD1, TIMBANGAN_TAG_CODE_PROD2, TIMBANGAN_TAG_CODE_FNS,
  BATTERY_COUNTER_ENABLE, BATTERY_COUNTER_LINE_NO, BATTERY_COUNTER_PLC_IP, BATTERY_COUNTER_TAG, BATTERY_COUNTER_API_URL,
- CHANGE_JOP_ENABLE, CHANGE_JOP_LINE_NO, CHANGE_JOP_PLC_IP, CHANGE_JOP_TAG, CHANGE_JOP_API_URL, CHANGE_JOP_PACK_CODE) = load_config()
+ CHANGE_JOP_ENABLE, CHANGE_JOP_LINE_NO, CHANGE_JOP_PLC_IP, CHANGE_JOP_TAG, CHANGE_JOP_API_URL, CHANGE_JOP_PACK_CODE,
+ AUTO_UPDATE_ENABLE, AUTO_UPDATE_API_URL, AUTO_UPDATE_CHECK_TIME, AUTO_UPDATE_INTERVAL, AUTO_UPDATE_VERSION) = load_config()
 
 # Load http port configuration directly
 try:
@@ -625,10 +637,23 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             self.send_response_json({
                 "status": "online",
                 "device": "Yuasa Production System Bridge",
+                "version": str(AUTO_UPDATE_VERSION or APP_VERSION),
                 "printer_name": PRINTER_NAME,
                 "line_no": PRINTER_API_LINE_NO,
                 "http_port": HTTP_PORT
             })
+        elif self.path in ['/check-update', '/api/check-update']:
+            if self.app_instance:
+                success, msg, latest_v = self.app_instance.check_and_apply_update(is_manual=True)
+                self.send_response_json({
+                    "status": "success" if success else "error",
+                    "success": success,
+                    "current_version": str(AUTO_UPDATE_VERSION or APP_VERSION),
+                    "latest_version": latest_v,
+                    "message": msg
+                })
+            else:
+                self.send_response_json({"status": "error", "message": "App instance not ready"}, 500)
         elif self.path in ['/reset-counter', '/api/reset-counter']:
             if self.app_instance:
                 self.app_instance.reset_battery_counter(reason="HTTP /reset-counter Request")
@@ -677,6 +702,18 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
                 }, status_code=http_code)
             else:
                 self.send_response_json({"status": "error", "success": False, "message": "App instance not ready"}, 500)
+        elif self.path in ['/check-update', '/api/check-update']:
+            if self.app_instance:
+                success, msg, latest_v = self.app_instance.check_and_apply_update(is_manual=True)
+                self.send_response_json({
+                    "status": "success" if success else "error",
+                    "success": success,
+                    "current_version": str(AUTO_UPDATE_VERSION or APP_VERSION),
+                    "latest_version": latest_v,
+                    "message": msg
+                })
+            else:
+                self.send_response_json({"status": "error", "message": "App instance not ready"}, 500)
         elif self.path in ['/reset-counter', '/api/reset-counter']:
             if self.app_instance:
                 self.app_instance.reset_battery_counter(reason="HTTP POST /reset-counter Request")
@@ -802,6 +839,11 @@ class ScannerApp(BaseApp):
         if CHANGE_JOP_ENABLE:
             self.jop_thread = threading.Thread(target=self.change_jop_loop, daemon=True)
             self.jop_thread.start()
+            
+        # Start Auto-Updater Background Thread (Pemeriksaan update harian tengah malam)
+        if AUTO_UPDATE_ENABLE:
+            self.auto_update_thread = threading.Thread(target=self.auto_update_loop, daemon=True)
+            self.auto_update_thread.start()
             
         # Start HTTP Server for Handheld/Mobile Printing (Selalu aktif untuk melayani API Handheld/Web)
         self.http_thread = threading.Thread(target=self.start_http_server, daemon=True)
@@ -3296,6 +3338,218 @@ PRINT 2
         except Exception as e:
             logging.error(f"[CHANGE_JOP] Error Jaringan ke API Change JOP: {e}")
             self.after(0, self.add_history, f"Change JOP: Gagal hubungi API ({e})")
+
+    # --- FITUR AUTO-UPDATER MANDIRI (DARI SERVER STAGING / BACKEND) ---
+    def parse_version_tuple(self, v_str):
+        """Mengubah string versi '1.0.2' menjadi tuple integer (1, 0, 2) untuk perbandingan akurat"""
+        try:
+            clean_v = str(v_str).strip().lstrip('vV')
+            parts = [int(p) for p in clean_v.split('.') if p.isdigit()]
+            return tuple(parts) if parts else (0,)
+        except Exception:
+            return (0,)
+
+    def check_and_apply_update(self, is_manual=False):
+        """
+        Mengecek ke backend apakah ada versi baru aplikasi Yuasa.
+        Jika ada, download binary baru dan jalankan apply_update.bat secara otomatis.
+        Returns: (success: bool, message: str, latest_version: str)
+        """
+        current_ver = str(AUTO_UPDATE_VERSION or APP_VERSION).strip()
+        timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_file = os.path.join(LOG_DIR_UPDATE, f"auto_update_{datetime.now().strftime('%Y-%m-%d')}.txt")
+        
+        def write_update_log(msg):
+            try:
+                with open(log_file, "a", encoding="utf-8") as f:
+                    f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+            except Exception as e_w:
+                logging.error(f"[AUTO-UPDATE] Gagal tulis file log: {e_w}")
+
+        trigger_type = "Manual (HTTP/User)" if is_manual else "Jadwal Otomatis"
+        logging.info(f"[AUTO-UPDATE] Mengecek update ke {AUTO_UPDATE_API_URL} (Versi Lokal: {current_ver}, Trigger: {trigger_type})...")
+        write_update_log(f"Mulai cek update ke {AUTO_UPDATE_API_URL} (Versi Lokal: {current_ver} | Trigger: {trigger_type})")
+        
+        try:
+            headers = {
+                'Content-Type': 'application/json',
+                'X-Scanner-Api-Key': 'Yu4saB4tterYindonesi4'
+            }
+            res = requests.get(AUTO_UPDATE_API_URL, headers=headers, timeout=8, verify=False)
+            if res.status_code not in [200, 201]:
+                err_msg = f"API Cek Update mengembalikan HTTP {res.status_code}: {res.text[:80]}"
+                logging.warning(f"[AUTO-UPDATE] {err_msg}")
+                write_update_log(f"GAGAL: {err_msg}")
+                return False, err_msg, current_ver
+
+            data = res.json()
+            latest_ver = str(data.get("latest_version") or data.get("version") or "").strip()
+            download_url = data.get("download_url") or data.get("url") or ""
+            changelog = data.get("changelog") or ""
+
+            if not latest_ver or not download_url:
+                msg = f"Respon API tidak lengkap (latest_version: '{latest_ver}', download_url: '{download_url}')"
+                logging.warning(f"[AUTO-UPDATE] {msg}")
+                write_update_log(f"PERINGATAN: {msg}")
+                return False, msg, latest_ver
+
+            curr_tuple = self.parse_version_tuple(current_ver)
+            latest_tuple = self.parse_version_tuple(latest_ver)
+
+            logging.info(f"[AUTO-UPDATE] Versi Server: {latest_ver} | Versi Lokal: {current_ver} | Changelog: {changelog}")
+            write_update_log(f"Versi Server: {latest_ver} | Versi Lokal: {current_ver} | Changelog: {changelog}")
+
+            # Jika versi server lebih tinggi dari lokal, lakukan update otomatis
+            if latest_tuple > curr_tuple:
+                msg_new = f"Ditemukan versi baru: {latest_ver}! Mulai mendownload dari {download_url}..."
+                logging.info(f"[AUTO-UPDATE] {msg_new}")
+                write_update_log(msg_new)
+                self.after(0, self.add_history, f"Update: Mendownload versi baru {latest_ver}...")
+
+                # 1. Download file binary baru ke file sementara
+                temp_filename = "Yuasa_Scanner_Update_Temp.exe"
+                temp_file_path = os.path.join(BASE_DIR, temp_filename)
+                
+                with requests.get(download_url, headers=headers, stream=True, timeout=90, verify=False) as dl_res:
+                    dl_res.raise_for_status()
+                    total_bytes = 0
+                    with open(temp_file_path, "wb") as f_out:
+                        for chunk in dl_res.iter_content(chunk_size=65536):
+                            if chunk:
+                                f_out.write(chunk)
+                                total_bytes += len(chunk)
+
+                # Validasi ukuran file (minimal 500 KB)
+                if total_bytes < 500 * 1024:
+                    err_size = f"Ukuran file download terlalu kecil ({total_bytes} bytes). Pembaharuan dibatalkan demi keamanan."
+                    logging.error(f"[AUTO-UPDATE] {err_size}")
+                    write_update_log(f"ERROR: {err_size}")
+                    if os.path.exists(temp_file_path):
+                        try: os.remove(temp_file_path)
+                        except Exception: pass
+                    return False, err_size, latest_ver
+
+                logging.info(f"[AUTO-UPDATE] Download selesai ({total_bytes} bytes). Menyiapkan script apply_update.bat...")
+                write_update_log(f"Download selesai ({total_bytes} bytes). Menjalankan apply_update.bat...")
+
+                # 2. Buat file apply_update.bat untuk mematikan process, mengganti exe, dan menyalakan kembali
+                batch_path = os.path.join(BASE_DIR, "apply_update.bat")
+                with open(batch_path, "w", encoding="utf-8") as b_file:
+                    b_file.write(f"""@echo off
+title Yuasa Industrial Scanner - Auto Update Runner
+color 0A
+echo ========================================================
+echo   YUASA SCANNER - MENERAPKAN PEMBARUAN VERSI {latest_ver}
+echo ========================================================
+echo.
+timeout /t 2 /nobreak > nul
+
+set "ROOT_DIR=%~dp0"
+if "%ROOT_DIR:~-1%"=="\\" set "ROOT_DIR=%ROOT_DIR:~0,-1%"
+cd /d "%ROOT_DIR%"
+
+set "NSSM=%ROOT_DIR%\\bin\\nssm.exe"
+set "TEMP_EXE=%ROOT_DIR%\\{temp_filename}"
+set "TARGET_SERVICE_EXE=%ROOT_DIR%\\Yuasa_Scanner_Service.exe"
+set "TARGET_APP_EXE=%ROOT_DIR%\\Yuasa_Scanner_App.exe"
+
+echo [1/3] Menghentikan aplikasi / service yang sedang berjalan...
+if exist "%NSSM%" (
+    "%NSSM%" stop YuasaScannerService >nul 2>&1
+)
+taskkill /f /im Yuasa_Scanner_Service.exe >nul 2>&1
+taskkill /f /im Yuasa_Scanner_App.exe >nul 2>&1
+timeout /t 1 /nobreak > nul
+
+echo [2/3] Mengganti file executable dengan versi terbaru {latest_ver}...
+if exist "%TEMP_EXE%" (
+    copy /y "%TEMP_EXE%" "%TARGET_SERVICE_EXE%" >nul 2>&1
+    copy /y "%TEMP_EXE%" "%TARGET_APP_EXE%" >nul 2>&1
+    del /f /q "%TEMP_EXE%" >nul 2>&1
+    echo       File executable berhasil diperbarui ke {latest_ver}!
+) else (
+    echo [ERROR] File temp update tidak ditemukan!
+    exit /b 1
+)
+
+echo [3/3] Menjalankan kembali aplikasi / service...
+if exist "%NSSM%" (
+    "%NSSM%" start YuasaScannerService >nul 2>&1
+    echo [SUKSES] Windows Service berhasil dijalankan kembali!
+) else (
+    if exist "%TARGET_APP_EXE%" (
+        start "" "%TARGET_APP_EXE%"
+        echo [SUKSES] Yuasa_Scanner_App berhasil dijalankan!
+    )
+)
+
+echo.
+echo Pembaruan versi {latest_ver} selesai!
+del "%~f0" >nul 2>&1
+exit /b 0
+""")
+
+                # 3. Jalankan apply_update.bat secara background detached dan tutup aplikasi saat ini
+                subprocess.Popen(["cmd.exe", "/c", batch_path], shell=True, creationflags=subprocess.CREATE_NEW_CONSOLE if hasattr(subprocess, 'CREATE_NEW_CONSOLE') else 0)
+                write_update_log(f"apply_update.bat dipicu. Menutup proses saat ini untuk mengizinkan penimpaan file...")
+                
+                threading.Thread(target=self.trigger_shutdown_for_update, daemon=True).start()
+                return True, f"Pembaruan ke versi {latest_ver} berhasil diunduh dan sedang dipasang...", latest_ver
+
+            else:
+                msg_uptodate = f"Aplikasi sudah versi terbaru ({current_ver}). Tidak perlu update."
+                logging.info(f"[AUTO-UPDATE] {msg_uptodate}")
+                write_update_log(msg_uptodate)
+                return True, msg_uptodate, latest_ver
+
+        except Exception as e:
+            err_exc = f"Gagal memeriksa/menerapkan update: {e}"
+            logging.error(f"[AUTO-UPDATE] {err_exc}")
+            write_update_log(f"EXCEPTION: {err_exc}")
+            return False, err_exc, current_ver
+
+    def trigger_shutdown_for_update(self):
+        """Menutup aplikasi setelah jeda singkat untuk memberi waktu respon HTTP kembali ke client"""
+        time.sleep(1.0)
+        logging.info("[AUTO-UPDATE] Menutup aplikasi untuk menyelesaikan update...")
+        try:
+            self.on_close()
+        except Exception:
+            pass
+        os._exit(0)
+
+    def auto_update_loop(self):
+        """Loop pemantau background yang mengecek update setiap jam CHECK_TIME (default 00:00)"""
+        if not AUTO_UPDATE_ENABLE:
+            return
+            
+        logging.info(f"[AUTO-UPDATE] Background Auto-Updater aktif! Jadwal cek harian: {AUTO_UPDATE_CHECK_TIME} WIB (Interval: {AUTO_UPDATE_INTERVAL}s)...")
+        last_checked_date = ""
+        
+        # Jeda awal 60 detik saat service pertama kali menyala sebelum mulai loop pemantauan
+        for _ in range(60):
+            if not self.running: return
+            time.sleep(1)
+            
+        while self.running:
+            try:
+                now = datetime.now()
+                current_hm = now.strftime("%H:%M")
+                current_ymd = now.strftime("%Y-%m-%d")
+                
+                # Cek apakah jam saat ini cocok dengan CHECK_TIME dan belum pernah dicek pada tanggal hari ini
+                if current_hm == AUTO_UPDATE_CHECK_TIME and current_ymd != last_checked_date:
+                    last_checked_date = current_ymd
+                    logging.info(f"[AUTO-UPDATE] Waktu jadwal harian tercapai ({current_hm} WIB). Memulai pemeriksaan update...")
+                    self.check_and_apply_update(is_manual=False)
+                    
+            except Exception as e:
+                logging.error(f"[AUTO-UPDATE] Error pada auto_update_loop: {e}")
+                
+            # Tunggu sesuai AUTO_UPDATE_INTERVAL (default 300 detik = 5 menit)
+            for _ in range(max(10, AUTO_UPDATE_INTERVAL)):
+                if not self.running: break
+                time.sleep(1)
 
     def start_http_server(self):
         port = HTTP_PORT
