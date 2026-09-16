@@ -11,6 +11,7 @@ dist/
 # Logs and temporary scratch files
 logs/
 *.log
+scratch/
 
 # Environments
 .venv/

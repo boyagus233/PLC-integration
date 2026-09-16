@@ -11,8 +11,30 @@ import shutil
 import configparser
 import socket
 from datetime import datetime
-import tkinter as tk
-from tkinter import ttk, messagebox
+HEADLESS_MODE = ('--headless' in sys.argv or '--service' in sys.argv)
+if not HEADLESS_MODE:
+    try:
+        import tkinter as tk
+        from tkinter import ttk, messagebox
+    except ImportError:
+        tk = None
+        ttk = None
+        messagebox = None
+        HEADLESS_MODE = True
+else:
+    tk = None
+    ttk = None
+    messagebox = None
+
+class MockStringVar:
+    def __init__(self, value=""):
+        self._val = str(value)
+    def get(self):
+        return self._val
+    def set(self, val):
+        self._val = str(val)
+
+BaseApp = object if HEADLESS_MODE else tk.Tk
 import subprocess
 
 try:
@@ -432,6 +454,14 @@ def load_config():
     bc_plc_ip = config.get("BATTERY_COUNTER_CONFIG", "PLC_IP", fallback="192.168.1.20/1").strip()
     bc_tag = config.get("BATTERY_COUNTER_CONFIG", "COUNTER_TAG", fallback="_IO_EM_DI_02").strip()
     bc_url = resolve_url(config.get("BATTERY_COUNTER_CONFIG", "API_URL", fallback="/api/fix-scanner-battery-counter"))
+
+    # Ambil nilai Tombol Ubah Job Order Production (JOP) (Rockwell Dedicated)
+    jop_enable = config.getboolean("CHANGE_JOP_CONFIG", "ENABLE", fallback=False)
+    jop_line_no = config.get("CHANGE_JOP_CONFIG", "LINE_NO", fallback="14").strip()
+    jop_plc_ip = config.get("CHANGE_JOP_CONFIG", "PLC_IP", fallback="192.168.1.20/1").strip()
+    jop_tag = config.get("CHANGE_JOP_CONFIG", "BUTTON_TAG", fallback="_IO_EM_DI_03").strip()
+    jop_url = resolve_url(config.get("CHANGE_JOP_CONFIG", "API_URL", fallback="/api/fix-scanner-change-jop"))
+    jop_pack_code = config.get("CHANGE_JOP_CONFIG", "PACK_CODE", fallback="button_pressed").strip()
     
     # Parse List Alamat Downtime
     dt_addresses = []
@@ -464,7 +494,8 @@ def load_config():
             pr_conn_mode, pr_plc_ip, pr_width, pr_height, pr_gap, pr_orientation,
             tb_enable, tb_line, tb_url, tb_retry_url, tb_width, tb_height, tb_gap, tb_orientation,
             tb_conn_mode, tb_plc_ip, tb_plc_port, tb_plc_baud, tb_trigger_mode, tb_tag_weight, tb_tag_qty, tb_tag_type, tb_tag_totalizer, tb_tag_sensor, tb_tag_code_prod1, tb_tag_code_prod2, tb_tag_code_fns,
-            bc_enable, bc_line_no, bc_plc_ip, bc_tag, bc_url)
+            bc_enable, bc_line_no, bc_plc_ip, bc_tag, bc_url,
+            jop_enable, jop_line_no, jop_plc_ip, jop_tag, jop_url, jop_pack_code)
 
 (SCANNER_ENABLE, LINE_NO, PORT_SCANNER, BAUD_RATE, API_URL, SCANNER_REMOVE_API_URL, SCANNER_REMOVE_ADDR,
  SCANNER2_ENABLE, LINE_NO2, PORT_SCANNER2, BAUD_RATE2, API_URL2, SCANNER2_REMOVE_API_URL, SCANNER2_REMOVE_ADDR,
@@ -475,7 +506,8 @@ def load_config():
  TIMBANGAN_WIDTH, TIMBANGAN_HEIGHT, TIMBANGAN_GAP, TIMBANGAN_ORIENTATION,
  TIMBANGAN_CONN_MODE, TIMBANGAN_PLC_IP, TIMBANGAN_PLC_PORT, TIMBANGAN_PLC_BAUD, TIMBANGAN_TRIGGER_MODE,
  TIMBANGAN_TAG_WEIGHT, TIMBANGAN_TAG_QTY, TIMBANGAN_TAG_TYPE, TIMBANGAN_TAG_TOTALIZER, TIMBANGAN_TAG_SENSOR, TIMBANGAN_TAG_CODE_PROD1, TIMBANGAN_TAG_CODE_PROD2, TIMBANGAN_TAG_CODE_FNS,
- BATTERY_COUNTER_ENABLE, BATTERY_COUNTER_LINE_NO, BATTERY_COUNTER_PLC_IP, BATTERY_COUNTER_TAG, BATTERY_COUNTER_API_URL) = load_config()
+ BATTERY_COUNTER_ENABLE, BATTERY_COUNTER_LINE_NO, BATTERY_COUNTER_PLC_IP, BATTERY_COUNTER_TAG, BATTERY_COUNTER_API_URL,
+ CHANGE_JOP_ENABLE, CHANGE_JOP_LINE_NO, CHANGE_JOP_PLC_IP, CHANGE_JOP_TAG, CHANGE_JOP_API_URL, CHANGE_JOP_PACK_CODE) = load_config()
 
 # Load http port configuration directly
 try:
@@ -597,6 +629,12 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
                 "line_no": PRINTER_API_LINE_NO,
                 "http_port": HTTP_PORT
             })
+        elif self.path in ['/reset-counter', '/api/reset-counter']:
+            if self.app_instance:
+                self.app_instance.reset_battery_counter(reason="HTTP /reset-counter Request")
+                self.send_response_json({"status": "success", "message": "Counter reset to 0"})
+            else:
+                self.send_response_json({"status": "error", "message": "App instance not ready"}, 500)
         else:
             self.send_response_json({"status": "error", "message": "Endpoint not found"}, 404)
 
@@ -639,6 +677,12 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
                 }, status_code=http_code)
             else:
                 self.send_response_json({"status": "error", "success": False, "message": "App instance not ready"}, 500)
+        elif self.path in ['/reset-counter', '/api/reset-counter']:
+            if self.app_instance:
+                self.app_instance.reset_battery_counter(reason="HTTP POST /reset-counter Request")
+                self.send_response_json({"status": "success", "message": "Counter reset to 0"})
+            else:
+                self.send_response_json({"status": "error", "message": "App instance not ready"}, 500)
         elif self.path == '/test-print-pallet':
             self.handle_test_print(False)
         elif self.path == '/test-print-masterbox':
@@ -659,49 +703,56 @@ class PrintRequestHandler(BaseHTTPRequestHandler):
             logging.error(f"[HTTP-SERVER] Error sending response: {e}")
 
 # --- APLIKASI GUI TKINTER ---
-class ScannerApp(tk.Tk):
+class ScannerApp(BaseApp):
     def __init__(self):
-        super().__init__()
-        
-        self.title("Yuasa Production System Bridge App")
-        self.geometry("820x680")
-        self.minsize(800, 600)
-        self.configure(bg="#f1f5f9")
+        if not HEADLESS_MODE and tk:
+            super().__init__()
+            self.title("Yuasa Production System Bridge App")
+            self.geometry("820x680")
+            self.minsize(800, 600)
+            self.configure(bg="#f1f5f9")
+            StringClass = tk.StringVar
+        else:
+            StringClass = MockStringVar
+            logging.info("[ENGINE] Menjalankan sistem dalam mode HEADLESS SERVICE (Background).")
         
         self.running = True
         self.sim_counter = 0
+        self.battery_counter = 0
+        self.counter_lock = threading.Lock()
         
         # State variables Scanner 1
         self.ser = None
-        self.scanner_status = tk.StringVar(value="MEMULAI...")
-        self.scanner_color = tk.StringVar(value="#64748b")
+        self.scanner_status = StringClass(value="MEMULAI...")
+        self.scanner_color = StringClass(value="#64748b")
         
         # State variables Scanner 2
         self.ser2 = None
-        self.scanner2_status = tk.StringVar(value="SCANNER 2 INACTIVE" if not SCANNER2_ENABLE else "MEMULAI...")
-        self.scanner2_color = tk.StringVar(value="#64748b")
+        self.scanner2_status = StringClass(value="SCANNER 2 INACTIVE" if not SCANNER2_ENABLE else "MEMULAI...")
+        self.scanner2_color = StringClass(value="#64748b")
         
         # Remove Mode Flags (diset oleh PLC monitor loop)
         self.remove_mode = False    # True = Scanner 1 dalam mode Remove from Masterbox
         self.remove_mode2 = False   # True = Scanner 2 dalam mode Remove from Masterbox
         
         # State variables Downtime PLC
-        self.plc_status = tk.StringVar(value="DOWNTIME INACTIVE" if not DOWNTIME_ENABLE else "MENGHUBUNGKAN...")
-        self.plc_color = tk.StringVar(value="#64748b" if not DOWNTIME_ENABLE else "#f59e0b")
-        self.plc_machine_state = tk.StringVar(value="-")
+        self.plc_status = StringClass(value="DOWNTIME INACTIVE" if not DOWNTIME_ENABLE else "MENGHUBUNGKAN...")
+        self.plc_color = StringClass(value="#64748b" if not DOWNTIME_ENABLE else "#f59e0b")
+        self.plc_machine_state = StringClass(value="-")
         
         # State variables Auto Printer (Pallet)
-        self.printer_status = tk.StringVar(value="PRINTER INACTIVE" if not PRINTER_ENABLE else "MEMERIKSA...")
-        self.printer_color = tk.StringVar(value="#64748b" if not PRINTER_ENABLE else "#f59e0b")
-        self.printer_info_state = tk.StringVar(value="-")
+        self.printer_status = StringClass(value="PRINTER INACTIVE" if not PRINTER_ENABLE else "MEMERIKSA...")
+        self.printer_color = StringClass(value="#64748b" if not PRINTER_ENABLE else "#f59e0b")
+        self.printer_info_state = StringClass(value="-")
         
         # State variables Timbangan (Universal)
-        self.timbangan_status = tk.StringVar(value="TIMBANGAN INACTIVE" if not TIMBANGAN_ENABLE else "MENGHUBUNGKAN...")
-        self.timbangan_color = tk.StringVar(value="#64748b" if not TIMBANGAN_ENABLE else "#f59e0b")
-        self.timbangan_info_state = tk.StringVar(value="-")
+        self.timbangan_status = StringClass(value="TIMBANGAN INACTIVE" if not TIMBANGAN_ENABLE else "MENGHUBUNGKAN...")
+        self.timbangan_color = StringClass(value="#64748b" if not TIMBANGAN_ENABLE else "#f59e0b")
+        self.timbangan_info_state = StringClass(value="-")
         
-        self.create_widgets()
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        if not HEADLESS_MODE and tk:
+            self.create_widgets()
+            self.protocol("WM_DELETE_WINDOW", self.on_close)
         
         # Start Scanner 1 Thread
         if SCANNER_ENABLE:
@@ -746,6 +797,11 @@ class ScannerApp(tk.Tk):
         if BATTERY_COUNTER_ENABLE:
             self.battery_counter_thread = threading.Thread(target=self.battery_counter_loop, daemon=True)
             self.battery_counter_thread.start()
+            
+        # Start Change JOP Button Thread (Dedicated Independent Rockwell Connection)
+        if CHANGE_JOP_ENABLE:
+            self.jop_thread = threading.Thread(target=self.change_jop_loop, daemon=True)
+            self.jop_thread.start()
             
         # Start HTTP Server for Handheld/Mobile Printing (Selalu aktif untuk melayani API Handheld/Web)
         self.http_thread = threading.Thread(target=self.start_http_server, daemon=True)
@@ -888,39 +944,68 @@ class ScannerApp(tk.Tk):
         btn_clear = ttk.Button(footer, text="Clear History", command=self.clear_history)
         btn_clear.pack(side=tk.RIGHT, padx=5)
         
+    def after(self, ms, func, *args):
+        if HEADLESS_MODE:
+            if ms <= 0:
+                t = threading.Thread(target=func, args=args, daemon=True)
+                t.start()
+            else:
+                t = threading.Timer(ms / 1000.0, func, args=args)
+                t.daemon = True
+                t.start()
+        else:
+            super().after(ms, func, *args)
+
+    def mainloop(self):
+        if HEADLESS_MODE:
+            try:
+                while self.running:
+                    time.sleep(1)
+            except (KeyboardInterrupt, SystemExit):
+                self.on_close()
+        else:
+            super().mainloop()
+
     def set_scanner_status(self, text, color):
         self.scanner_status.set(text)
         self.scanner_color.set(color)
-        self.scanner_status_box.configure(bg=color)
+        if hasattr(self, 'scanner_status_box'):
+            self.scanner_status_box.configure(bg=color)
         
     def set_scanner2_status(self, text, color):
         self.scanner2_status.set(text)
         self.scanner2_color.set(color)
-        self.scanner2_status_box.configure(bg=color)
+        if hasattr(self, 'scanner2_status_box'):
+            self.scanner2_status_box.configure(bg=color)
         
     def set_plc_status(self, text, color, info_state):
         self.plc_status.set(text)
         self.plc_color.set(color)
-        self.plc_status_box.configure(bg=color)
+        if hasattr(self, 'plc_status_box'):
+            self.plc_status_box.configure(bg=color)
         self.plc_machine_state.set(info_state)
         
     def set_printer_status(self, text, color, info_state):
         self.printer_status.set(text)
         self.printer_color.set(color)
-        self.pr_status_box.configure(bg=color)
+        if hasattr(self, 'pr_status_box'):
+            self.pr_status_box.configure(bg=color)
         self.printer_info_state.set(info_state)
         
     def set_timbangan_status(self, text, color, info_state):
         self.timbangan_status.set(text)
         self.timbangan_color.set(color)
-        self.tb_status_box.configure(bg=color)
+        if hasattr(self, 'tb_status_box'):
+            self.tb_status_box.configure(bg=color)
         self.timbangan_info_state.set(info_state)
         
     def add_history(self, msg):
         timestamp = datetime.now().strftime("%H:%M:%S")
         formatted_msg = f"[{timestamp}] {msg}"
-        self.lst_history.insert(tk.END, formatted_msg)
-        self.lst_history.yview(tk.END)
+        logging.info(f"[HISTORY] {msg}")
+        if hasattr(self, 'lst_history') and tk:
+            self.lst_history.insert(tk.END, formatted_msg)
+            self.lst_history.yview(tk.END)
         
     def open_log_folder(self):
         try:
@@ -3049,7 +3134,6 @@ PRINT 2
                 self.after(0, self.add_history, f"Counter Baterai: Terhubung ke PLC Rockwell {BATTERY_COUNTER_PLC_IP}")
                 
                 last_sensor_state = False
-                local_counter = 0
                 
                 while self.running:
                     res = plc.read(BATTERY_COUNTER_TAG)
@@ -3060,11 +3144,14 @@ PRINT 2
                     
                     # Deteksi Falling Edge: Sensor aktif (1) lalu mati (0) -> 1 Baterai Lewat!
                     if not current_sensor_state and last_sensor_state:
-                        local_counter += 1
+                        with self.counter_lock:
+                            self.battery_counter += 1
+                            current_count = self.battery_counter
+                            
                         now = datetime.now()
                         timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")
                         
-                        msg = f"Counter Baterai: Baterai #{local_counter} terdeteksi! (Tag: {BATTERY_COUNTER_TAG})"
+                        msg = f"Counter Baterai: Pulsa +1 (Total JOP Ini: {current_count}) | Tag: {BATTERY_COUNTER_TAG}"
                         logging.info(f"[BATTERY_COUNTER] {msg}")
                         self.after(0, self.add_history, msg)
                         
@@ -3072,14 +3159,14 @@ PRINT 2
                         try:
                             counter_log_file = os.path.join(LOG_DIR_COUNTER, f"battery_counter_{datetime.now().strftime('%Y-%m-%d')}.txt")
                             with open(counter_log_file, "a", encoding="utf-8") as f:
-                                f.write(f"[{timestamp_str}] Line: {BATTERY_COUNTER_LINE_NO} | Counter: {local_counter} | Tag: {BATTERY_COUNTER_TAG}\n")
+                                f.write(f"[{timestamp_str}] Pulsa: +1 | Total JOP: {current_count} | Line: {BATTERY_COUNTER_LINE_NO} | Tag: {BATTERY_COUNTER_TAG}\n")
                         except Exception as e_log:
                             logging.error(f"[BATTERY_COUNTER] Gagal tulis file log counter lokal: {e_log}")
                         
                         # Kirim data counter realtime ke backend API di thread terpisah
                         payload = {
                             "line_no": str(BATTERY_COUNTER_LINE_NO),
-                            "counter": local_counter,
+                            "counter": current_count,
                             "tag_name": BATTERY_COUNTER_TAG,
                             "timestamp": timestamp_str
                         }
@@ -3098,6 +3185,24 @@ PRINT 2
                     if not self.running: break
                     time.sleep(0.1)
 
+    def reset_battery_counter(self, reason="Manual / Ganti JOP"):
+        """Mereset counter baterai lokal ke 0 saat pergantian JOP atau reset manual"""
+        with self.counter_lock:
+            old_val = self.battery_counter
+            self.battery_counter = 0
+            
+        timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        msg = f"[BATTERY_COUNTER] === RESET COUNTER KE 0 (Alasan: {reason} | Nilai Sebelumnya: {old_val}) ==="
+        logging.info(msg)
+        self.after(0, self.add_history, f"Counter: Reset ke 0 ({reason})")
+        
+        try:
+            counter_log_file = os.path.join(LOG_DIR_COUNTER, f"battery_counter_{datetime.now().strftime('%Y-%m-%d')}.txt")
+            with open(counter_log_file, "a", encoding="utf-8") as f:
+                f.write(f"[{timestamp_str}] === GANTI JOP / RESET -> COUNTER DI-RESET KE 0 (Sebelumnya: {old_val} | Alasan: {reason}) ===\n")
+        except Exception as e_log:
+            logging.error(f"[BATTERY_COUNTER] Gagal tulis log reset counter: {e_log}")
+
     def send_battery_counter_api(self, payload):
         """Mengirim data counter baterai realtime ke Backend API"""
         try:
@@ -3110,6 +3215,87 @@ PRINT 2
                 logging.warning(f"[BATTERY_COUNTER] API Counter Respon Error ({response.status_code}): {response.text[:60]}")
         except Exception as e:
             logging.error(f"[BATTERY_COUNTER] Error Jaringan ke API Counter: {e}")
+
+    # --- LOOP UTAMA PEMANTAUAN TOMBOL CHANGE JOP (ROCKWELL PLC) ---
+    def change_jop_loop(self):
+        """Loop pemantauan independen untuk Tombol Ubah Job Order Production (JOP) via Rockwell PLC"""
+        if not CHANGE_JOP_ENABLE:
+            return
+            
+        if not PYCOMM3_AVAILABLE:
+            logging.error("[CHANGE_JOP] pycomm3 tidak terinstal. Pemantauan tombol Change JOP dibatalkan.")
+            return
+
+        logging.info(f"[CHANGE_JOP] Memulai pemantauan Tombol Change JOP di Rockwell PLC {CHANGE_JOP_PLC_IP} (Tag: {CHANGE_JOP_TAG})...")
+        
+        while self.running:
+            try:
+                plc = LogixDriver(CHANGE_JOP_PLC_IP)
+                plc.open()
+                logging.info(f"[CHANGE_JOP] Terhubung ke Rockwell PLC {CHANGE_JOP_PLC_IP} untuk Tombol Change JOP!")
+                self.after(0, self.add_history, f"Change JOP: Terhubung ke PLC Rockwell {CHANGE_JOP_PLC_IP}")
+                
+                last_button_state = False
+                last_press_time = 0.0
+                
+                while self.running:
+                    res = plc.read(CHANGE_JOP_TAG)
+                    if res is None or res.value is None:
+                        raise RuntimeError(f"Gagal membaca tag {CHANGE_JOP_TAG} dari PLC")
+                        
+                    current_button_state = bool(res.value)
+                    now_time = time.time()
+                    
+                    # Deteksi Rising Edge: Tombol ditekan (0 -> 1)
+                    if current_button_state and not last_button_state:
+                        # Debounce: Pastikan jeda minimal 1.5 detik antar penekanan tombol
+                        if (now_time - last_press_time) >= 1.5:
+                            last_press_time = now_time
+                            timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            
+                            msg = f"Tombol Change JOP Ditekan! Mengirim permintaan ganti JOP ke server... (Tag: {CHANGE_JOP_TAG})"
+                            logging.info(f"[CHANGE_JOP] {msg}")
+                            self.after(0, self.add_history, f"Change JOP: Tombol ditekan -> Kirim ke API ({CHANGE_JOP_TAG})")
+                            
+                            # Otomatis me-reset counter baterai ke 0 agar JOP baru mulai dari 1 (anti-nyangkut di 301)
+                            self.reset_battery_counter(reason=f"Tombol Fisik Change JOP ({CHANGE_JOP_TAG}) Ditekan")
+                            
+                            payload = {
+                                "line_no": str(CHANGE_JOP_LINE_NO),
+                                "pack_code": str(CHANGE_JOP_PACK_CODE)
+                            }
+                            threading.Thread(
+                                target=self.send_change_jop_api,
+                                args=(payload,),
+                                daemon=True
+                            ).start()
+                        else:
+                            logging.debug("[CHANGE_JOP] Tombol diabaikan (debounce).")
+                            
+                    last_button_state = current_button_state
+                    time.sleep(0.08) # Polling 80ms (~12.5 FPS) - responsif untuk tombol fisik dan tidak membebani PLC
+                    
+            except Exception as e:
+                logging.error(f"[CHANGE_JOP] Rockwell Connection Error: {e}")
+                for _ in range(30):
+                    if not self.running: break
+                    time.sleep(0.1)
+
+    def send_change_jop_api(self, payload):
+        """Mengirim payload ubah Job Order Production (JOP) ke Backend API"""
+        try:
+            headers = {'Content-Type': 'application/json', 'X-Scanner-Api-Key': 'Yu4saB4tterYindonesi4'}
+            logging.info(f"[CHANGE_JOP] Kirim request ubah JOP ke {CHANGE_JOP_API_URL}: {payload}")
+            response = requests.post(CHANGE_JOP_API_URL, json=payload, headers=headers, timeout=5, verify=False)
+            if response.status_code in [200, 201]:
+                logging.info(f"[CHANGE_JOP] API Change JOP Sukses ({response.status_code}): {response.text.strip()}")
+                self.after(0, self.add_history, f"Change JOP: Sukses ubah JOP (Status: {response.status_code})")
+            else:
+                logging.warning(f"[CHANGE_JOP] API Change JOP Respon Error ({response.status_code}): {response.text[:100]}")
+                self.after(0, self.add_history, f"Change JOP: Error ({response.status_code}) -> {response.text[:50]}")
+        except Exception as e:
+            logging.error(f"[CHANGE_JOP] Error Jaringan ke API Change JOP: {e}")
+            self.after(0, self.add_history, f"Change JOP: Gagal hubungi API ({e})")
 
     def start_http_server(self):
         port = HTTP_PORT
@@ -3132,19 +3318,29 @@ PRINT 2
                 logging.error(f"[HTTP-SERVER] Gagal menghentikan server: {e}")
         if self.ser and self.ser.is_open:
             self.ser.close()
-        self.destroy()
+        if not HEADLESS_MODE and hasattr(self, 'destroy'):
+            try:
+                self.destroy()
+            except Exception:
+                pass
 
-if __name__ == "__main__":
+def main():
     # Prevent multiple instances from running simultaneously
     lock_socket = None
     try:
         lock_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         lock_socket.bind(('127.0.0.1', 65432))
     except Exception:
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showwarning("Aplikasi Sudah Berjalan", "Aplikasi Yuasa Scanner sudah aktif di background / taskbar!\nTidak dapat membuka dua aplikasi secara bersamaan.")
+        if not HEADLESS_MODE and tk:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showwarning("Aplikasi Sudah Berjalan", "Aplikasi Yuasa Scanner sudah aktif di background / taskbar!\nTidak dapat membuka dua aplikasi secara bersamaan.")
+        else:
+            logging.error("Aplikasi Yuasa Scanner sudah aktif di background / service! Menutup instance baru.")
         sys.exit(0)
 
     app = ScannerApp()
     app.mainloop()
+
+if __name__ == "__main__":
+    main()
