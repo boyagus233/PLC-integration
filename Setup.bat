@@ -74,6 +74,15 @@ del /f /q "%STARTUP_FOLDER%\Yuasa_Scanner_App.bat" >nul 2>&1
 echo [3/6] Menghentikan service lama (jika ada)...
 "%NSSM%" stop %SERVICE_NAME% >nul 2>&1
 "%NSSM%" remove %SERVICE_NAME% confirm >nul 2>&1
+timeout /t 1 /nobreak > nul
+
+REM Otomatis perbarui file exe jika ada build baru
+if exist "%ROOT_DIR%\dist\Yuasa_Scanner_Service.exe" (
+    copy /y "%ROOT_DIR%\dist\Yuasa_Scanner_Service.exe" "%ROOT_DIR%\Yuasa_Scanner_Service.exe" >nul 2>&1
+)
+if exist "%ROOT_DIR%\dist\Yuasa_Scanner_App.exe" (
+    copy /y "%ROOT_DIR%\dist\Yuasa_Scanner_App.exe" "%ROOT_DIR%\Yuasa_Scanner_App.exe" >nul 2>&1
+)
 
 echo [4/6] Memasang Windows Service baru (%SERVICE_NAME%)...
 if "%TARGET_ARGS%"=="" (
